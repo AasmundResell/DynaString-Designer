@@ -1,3 +1,4 @@
+
 import { TelemetryPoint, OperationParams } from "../types";
 
 // Simulates the C++ backend streaming data
@@ -10,6 +11,7 @@ export class MockSimulator {
 
   constructor(initialParams: OperationParams) {
     this.params = initialParams;
+    this.currentDepth = initialParams.initial_bit_depth;
   }
 
   public updateParams(newParams: OperationParams) {

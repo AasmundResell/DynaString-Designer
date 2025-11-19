@@ -14,6 +14,8 @@ declare global {
       bufferGeometry: any;
       bufferAttribute: any;
       meshStandardMaterial: any;
+      meshPhysicalMaterial: any;
+      planeGeometry: any;
       ambientLight: any;
       pointLight: any;
       directionalLight: any;
@@ -69,7 +71,6 @@ const calculateTrajectory = (points: WellPoint[]): THREE.Vector3[] => {
 };
 
 // --- Detailed Mesh Generation ---
-// Mirrors C++ PipeRenderer: Generates mesh with tool joints, stabilizers, and bit profiles.
 const generateDrillStringGeometry = (
   pathPoints: THREE.Vector3[], 
   components: StringComponent[]
@@ -77,7 +78,6 @@ const generateDrillStringGeometry = (
   const curve = new THREE.CatmullRomCurve3(pathPoints);
   const totalPathLength = curve.getLength();
   
-  // 1. Flatten Drill String (expand counts)
   interface FlatComp {
     type: ComponentType;
     od: number;
@@ -100,19 +100,15 @@ const generateDrillStringGeometry = (
     }
   });
 
-  // 2. Generate Geometry Arrays
   const positions: number[] = [];
   const normals: number[] = [];
   const colors: number[] = [];
   const indices: number[] = [];
 
-  // Simulation Params
-  const RADIAL_SEGMENTS = 12; // Low poly for performance
+  const RADIAL_SEGMENTS = 12; 
   let vertexIndex = 0;
 
-  // Helper to add a ring
   const addRing = (pos: THREE.Vector3, T: THREE.Vector3, N: THREE.Vector3, B: THREE.Vector3, radius: number, color: THREE.Color) => {
-    // Scale factor for visibility (exaggerate width 2x)
     const r = (radius * 0.0254) * 2.0; 
 
     for (let j = 0; j <= RADIAL_SEGMENTS; j++) {
@@ -120,7 +116,6 @@ const generateDrillStringGeometry = (
       const sin = Math.sin(theta);
       const cos = Math.cos(theta);
 
-      // P = Center + r * (cos*N + sin*B)
       const vx = pos.x + r * (cos * N.x + sin * B.x);
       const vy = pos.y + r * (cos * N.y + sin * B.y);
       const vz = pos.z + r * (cos * N.z + sin * B.z);
@@ -135,16 +130,12 @@ const generateDrillStringGeometry = (
     }
   };
 
-  // 3. Iterate String and Sample Curve
   let currentMD = 0;
   let currentUp = new THREE.Vector3(0, 0, 1); 
 
-  // Loop through components
   for (const comp of flatString) {
     if (currentMD >= totalPathLength) break;
 
-    // Define Profile Sections for this component
-    // [RelativeStart, RelativeEnd, OD, Color]
     type Section = { start: number, end: number, od: number, color: THREE.Color };
     const sections: Section[] = [];
     
@@ -152,59 +143,43 @@ const generateDrillStringGeometry = (
     const OD = comp.od;
 
     if (comp.type === ComponentType.DRILL_PIPE || comp.type === ComponentType.HWDP) {
-      // Pipe with Tool Joints
       const jointLen = 0.4; 
-      const jointOD = OD * 1.4; // Approx tool joint OD
-      
-      // Top Joint (Box)
+      const jointOD = OD * 1.4; 
       sections.push({ start: 0, end: jointLen, od: jointOD, color: COLORS.TOOL_JOINT });
-      // Body
       sections.push({ start: jointLen, end: L - jointLen, od: OD, color: COLORS.PIPE_BODY });
-      // Bottom Joint (Pin)
       sections.push({ start: L - jointLen, end: L, od: jointOD, color: COLORS.TOOL_JOINT });
-
     } else if (comp.type === ComponentType.STABILIZER && comp.stabilizer) {
-       // Stabilizer Profile: Body -> Blade -> Body
        const sParams = comp.stabilizer;
        const bladeStart = L - sParams.distFromBottom - sParams.bladeLength;
        const bladeEnd = L - sParams.distFromBottom;
-       
        if (bladeStart > 0) sections.push({ start: 0, end: bladeStart, od: OD, color: COLORS.COLLAR });
        sections.push({ start: Math.max(0, bladeStart), end: bladeEnd, od: sParams.bladeOd, color: COLORS.STABILIZER_BLADE });
        if (bladeEnd < L) sections.push({ start: bladeEnd, end: L, od: OD, color: COLORS.COLLAR });
-
     } else if (comp.type === ComponentType.BIT) {
-       // Bit Profile
        sections.push({ start: 0, end: L, od: OD, color: COLORS.BIT });
     } else {
-       // Generic Collar / Sub
        sections.push({ start: 0, end: L, od: OD, color: COLORS.COLLAR });
     }
 
-    // Generate Mesh for Sections
     for (const sec of sections) {
       const startGlobal = currentMD + sec.start;
       const endGlobal = currentMD + sec.end;
       
       if (startGlobal >= totalPathLength) continue;
 
-      const stepSize = 2.0; // Sampling resolution inside body (meters)
+      const stepSize = 2.0; 
       const len = sec.end - sec.start;
       const numSteps = Math.max(1, Math.ceil(len / stepSize));
 
       for (let i = 0; i <= numSteps; i++) {
          const tLocal = (i / numSteps) * len;
          const md = startGlobal + tLocal;
-         
-         // Stop if we exceed the path
          if (md > totalPathLength) break;
          
-         // Curve sampling
          const u = md / totalPathLength;
          const pos = curve.getPointAt(u);
          const tangent = curve.getTangentAt(u).normalize();
          
-         // Compute Frame (Parallel Transport approximation)
          const axis = new THREE.Vector3().crossVectors(currentUp, tangent).normalize();
          if (axis.lengthSq() < 0.001) axis.set(1,0,0); 
          const normal = new THREE.Vector3().crossVectors(tangent, axis).normalize();
@@ -214,23 +189,18 @@ const generateDrillStringGeometry = (
 
          addRing(pos, tangent, normal, binormal, sec.od, sec.color);
          
-         // Generate Indices (faces connecting this ring to previous)
          if (vertexIndex >= RADIAL_SEGMENTS + 1) {
             const prevRingStart = vertexIndex - (RADIAL_SEGMENTS + 1) * 2;
             const thisRingStart = vertexIndex - (RADIAL_SEGMENTS + 1);
-            
             for (let j = 0; j < RADIAL_SEGMENTS; j++) {
               const a = prevRingStart + j;
               const b = prevRingStart + j + 1;
               const c = thisRingStart + j;
               const d = thisRingStart + j + 1;
-              
-              // Two triangles per quad
               indices.push(a, c, d);
               indices.push(a, d, b);
             }
          }
-         
          vertexIndex += (RADIAL_SEGMENTS + 1);
       }
     }
@@ -243,52 +213,93 @@ const generateDrillStringGeometry = (
   geometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(colors), 3));
   geometry.setIndex(indices);
   geometry.computeVertexNormals();
-  
   return geometry;
 };
 
-
-// --- Render Components ---
-
 const DetailedDrillString: React.FC<{ config: SimulationConfig }> = React.memo(({ config }) => {
   const trajectory = useMemo(() => calculateTrajectory(config.wellPath), [config.wellPath]);
-  
-  // Generate Heavy Mesh ONLY when config changes
   const stringGeometry = useMemo(() => {
      return generateDrillStringGeometry(trajectory, config.drillString);
   }, [trajectory, config.drillString]);
 
   return (
      <mesh geometry={stringGeometry}>
-        <meshStandardMaterial 
-          vertexColors 
-          metalness={0.6} 
-          roughness={0.4} 
-        />
+        <meshStandardMaterial vertexColors metalness={0.6} roughness={0.4} />
      </mesh>
   );
 });
 
-const WellBore: React.FC<{ config: SimulationConfig }> = React.memo(({ config }) => {
-   const path = useMemo(() => calculateTrajectory(config.wellPath), [config.wellPath]);
-   const curve = useMemo(() => new THREE.CatmullRomCurve3(path), [path]);
+const WellBore: React.FC<{ config: SimulationConfig, telemetryRef: React.MutableRefObject<TelemetryPoint | undefined> }> = React.memo(({ config, telemetryRef }) => {
+   const pathPoints = useMemo(() => calculateTrajectory(config.wellPath), [config.wellPath]);
+   const fullCurve = useMemo(() => new THREE.CatmullRomCurve3(pathPoints), [pathPoints]);
+   const TUBULAR_SEGMENTS = 2000; 
+   const RADIAL_SEGMENTS = 20;
+   const points = useMemo(() => fullCurve.getSpacedPoints(TUBULAR_SEGMENTS), [fullCurve, TUBULAR_SEGMENTS]); 
+
+   const tubeRef = useRef<any>(null);
+   const lineRef = useRef<any>(null);
    
+   useEffect(() => {
+      if (lineRef.current) {
+         lineRef.current.computeLineDistances();
+      }
+   }, [points]);
+
+   useFrame(() => {
+      if (!tubeRef.current || !lineRef.current) return;
+      
+      const initialHoleDepth = config.operations.initial_hole_depth ?? 1000;
+      const currentDepth = telemetryRef.current?.depth || 0;
+      const holeDepth = Math.max(initialHoleDepth, currentDepth);
+      const totalLen = fullCurve.getLength();
+      if (totalLen === 0) return;
+
+      const fraction = Math.min(1, Math.max(0, holeDepth / totalLen));
+      const segmentIndex = Math.floor(fraction * TUBULAR_SEGMENTS);
+      const indicesPerSegment = RADIAL_SEGMENTS * 6;
+      const tubeDrawCount = segmentIndex * indicesPerSegment;
+
+      if (tubeRef.current.geometry) {
+         tubeRef.current.geometry.setDrawRange(0, tubeDrawCount);
+      }
+
+      if (lineRef.current.geometry) {
+         const lineStart = segmentIndex;
+         const lineCount = (TUBULAR_SEGMENTS + 1) - lineStart;
+         if (lineCount > 0) {
+            lineRef.current.geometry.setDrawRange(lineStart, lineCount);
+            lineRef.current.visible = true;
+         } else {
+            lineRef.current.visible = false;
+         }
+      }
+   });
+
    return (
-    <mesh>
-      <tubeGeometry args={[curve, 400, 20, 24, false]} />
-      <meshStandardMaterial 
-        color="#e2e8f0" 
-        side={THREE.BackSide} 
-        transparent 
-        opacity={0.3} 
-        roughness={0.8}
-      />
-    </mesh>
+    <group>
+      <mesh ref={tubeRef}>
+        <tubeGeometry args={[fullCurve, TUBULAR_SEGMENTS, 20, RADIAL_SEGMENTS, false]} />
+        <meshPhysicalMaterial 
+          color="#94a3b8" 
+          side={THREE.BackSide} 
+          transparent 
+          opacity={0.3} 
+          roughness={0.2}
+          metalness={0.5}
+          transmission={0.2}
+        />
+      </mesh>
+      
+      <line ref={lineRef}>
+        <bufferGeometry>
+           <bufferAttribute attach="attributes-position" count={points.length} array={new Float32Array(points.flatMap(p => [p.x, p.y, p.z]))} itemSize={3} />
+        </bufferGeometry>
+        <lineDashedMaterial color="#06b6d4" linewidth={2} opacity={1} transparent dashSize={10} gapSize={5} />
+      </line>
+    </group>
    );
 });
 
-// BitMarker tracks the simulation state (depth/rotation)
-// Direct DOM manipulation via Refs for performance (bypass React render cycle)
 const BitMarker: React.FC<{ 
   config: SimulationConfig, 
   telemetryRef: React.MutableRefObject<TelemetryPoint | undefined>,
@@ -300,22 +311,13 @@ const BitMarker: React.FC<{
 
   useFrame(() => {
     if (!meshRef.current) return;
-    const data = telemetryRef.current;
-    if (!data) return;
-
-    const depth = data.depth;
-    const rpm = data.rpmBit;
-    
-    // Map Depth to Curve T
+    const depth = telemetryRef.current ? telemetryRef.current.depth : (config.operations.initial_bit_depth || 0);
+    const rpm = telemetryRef.current ? telemetryRef.current.rpmBit : 0;
     const t = totalLen > 0 ? Math.min(1, Math.max(0, depth / totalLen)) : 0;
     const point = curve.getPointAt(t);
     meshRef.current.position.copy(point);
-
-    // Orientation
     const tangent = curve.getTangentAt(t);
     meshRef.current.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), tangent);
-
-    // Rotation animation
     meshRef.current.rotateY(rpm * 0.01);
   });
 
@@ -327,20 +329,25 @@ const BitMarker: React.FC<{
   );
 };
 
-// --- Main Scene ---
-
-// Standard fixed-size label that always faces camera (Billboard)
-// Uses world units for fontSize (e.g., 40 = 40 meters height approx)
-const AxisLabel: React.FC<{ position: [number, number, number], text: string, color?: string, fontSize?: number }> = ({ position, text, color = "#64748b", fontSize = 40 }) => {
+const AxisLabel: React.FC<{ 
+  position: [number, number, number], 
+  text: string, 
+  color?: string, 
+  fontSize?: number,
+  fontWeight?: string | number,
+  anchorY?: "top" | "top-baseline" | "middle" | "bottom-baseline" | "bottom" 
+}> = ({ position, text, color = "#334155", fontSize = 60, fontWeight = "bold", anchorY = "middle" }) => {
   return (
     <Billboard position={position}>
       <Text
         color={color}
         fontSize={fontSize}
+        fontWeight={fontWeight}
         anchorX="center"
-        anchorY="middle"
-        outlineWidth={fontSize * 0.05}
-        outlineColor="#f8fafc"
+        anchorY={anchorY}
+        outlineWidth={fontSize * 0.04}
+        outlineColor="#ffffff"
+        fillOpacity={1}
       >
         {text}
       </Text>
@@ -351,31 +358,24 @@ const AxisLabel: React.FC<{ position: [number, number, number], text: string, co
 const AnnotatedAxes: React.FC<{ config: SimulationConfig }> = React.memo(({ config }) => {
   const path = useMemo(() => calculateTrajectory(config.wellPath), [config.wellPath]);
   
-  // Calculate bounds
-  let minX = 0, maxX = 0, minZ = 0, maxZ = 0, minY = 0;
+  let minY = 0;
+  let maxExtent = 0; 
+
   path.forEach(p => {
-      if(p.x < minX) minX = p.x;
-      if(p.x > maxX) maxX = p.x;
-      if(p.z < minZ) minZ = p.z;
-      if(p.z > maxZ) maxZ = p.z;
       if(p.y < minY) minY = p.y;
+      const r = Math.max(Math.abs(p.x), Math.abs(p.z));
+      if (r > maxExtent) maxExtent = r;
   });
 
   const maxDepth = Math.abs(minY);
-  
-  // Floor placement: slightly below deepest point to act as a ground plane
   const floorY = minY - Math.max(50, maxDepth * 0.05); 
 
-  // Dynamic Grid Size calculation
-  const maxDeviation = Math.max(Math.abs(minX), Math.abs(maxX), Math.abs(minZ), Math.abs(maxZ));
-  // Radius should cover deviation, min 500m
-  const gridRadius = Math.max(500, maxDeviation * 1.5); 
-  const gridSize = gridRadius * 2;
+  const padding = Math.max(200, maxExtent * 0.2);
+  const limit = maxExtent + padding; 
+  const size = limit * 2;
 
-  // Depth Ticks generator
   const depthTicks = useMemo(() => {
       const ticks = [];
-      // Adjust interval based on depth to avoid clutter
       const interval = maxDepth > 5000 ? 1000 : 500;
       for(let d=0; d <= maxDepth; d+=interval) {
           ticks.push(d);
@@ -383,72 +383,71 @@ const AnnotatedAxes: React.FC<{ config: SimulationConfig }> = React.memo(({ conf
       return ticks;
   }, [maxDepth]);
 
-  // Floor Grid Ticks generator
   const floorTicks = useMemo(() => {
       const ticks = [];
-      const step = gridRadius > 2000 ? 1000 : (gridRadius > 800 ? 250 : 100);
-      // Start from step to avoid overlapping with center line
-      for(let i = step; i <= gridRadius; i += step) {
-          ticks.push(i);
+      const step = size > 4000 ? 1000 : (size > 1500 ? 500 : 250);
+      const start = Math.ceil(-limit / step) * step;
+      const end = Math.floor(limit / step) * step;
+      for(let v = start; v <= end; v += step) {
+        if (Math.abs(v) > 10 && Math.abs(v) < limit - 10) { 
+           ticks.push(v);
+        }
       }
       return ticks;
-  }, [gridRadius]);
+  }, [limit, size]);
 
   return (
      <group>
-        {/* Central TVD Axis Line (Reference vertical from surface) */}
-        <Line 
-            points={[[0, 0, 0], [0, floorY, 0]]} 
-            color="#cbd5e1" 
-            lineWidth={1} 
-            dashed 
-            dashScale={10} 
-            gapSize={5}
-        />
+        {/* Central TVD Axis Line */}
+        <Line points={[[0, 0, 0], [0, floorY, 0]]} color="#94a3b8" lineWidth={1} dashed dashScale={10} gapSize={5} />
 
-        {/* TVD Markers along central axis */}
+        {/* TVD Markers */}
         {depthTicks.map(d => (
             <group key={d} position={[0, -d, 0]}>
-                {/* Tick Mark */}
-                <Line points={[[-20, 0, 0], [20, 0, 0]]} color="#94a3b8" lineWidth={1} />
-                {/* Label offset slightly */}
-                <AxisLabel position={[60, 0, 0]} text={`${d}m`} color="#475569" fontSize={60} />
+                <Line points={[[-20, 0, 0], [20, 0, 0]]} color="#64748b" lineWidth={1} />
+                <AxisLabel position={[60, 0, 0]} text={`${d}m`} color="#334155" fontSize={60} />
             </group>
         ))}
 
         {/* Floor Grid & Cardinal Directions */}
         <group position={[0, floorY, 0]}>
+            {/* Matte Floor Plane - Made Whiter */}
+            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.5, 0]} receiveShadow>
+                <planeGeometry args={[size, size]} />
+                <meshStandardMaterial color="#ffffff" roughness={0.9} metalness={0.0} />
+            </mesh>
+
+            {/* High Contrast Grid */}
             <Grid 
-                args={[gridSize, gridSize]} 
+                position={[0, 0, 0]}
+                args={[size, size]} 
                 cellSize={100} 
                 sectionSize={500} 
-                fadeDistance={gridSize * 0.8} 
+                fadeDistance={size * 0.9} 
                 sectionColor="#94a3b8" 
-                cellColor="#e2e8f0"
+                cellColor="#cbd5e1"
                 infiniteGrid={false}
             />
             
-            {/* Axis Lines */}
-            <Line points={[[-gridRadius, 0, 0], [gridRadius, 0, 0]]} color="#94a3b8" lineWidth={1} transparent opacity={0.4} />
-            <Line points={[[0, 0, -gridRadius], [0, 0, gridRadius]]} color="#94a3b8" lineWidth={1} transparent opacity={0.4} />
+            {/* Axes for Orientation - Neutral Colors */}
+            {/* North (Z-) Axis */}
+            <Line points={[[0, 0, 0], [0, 0, -limit]]} color="#64748b" lineWidth={3} />
+            {/* East (X+) Axis */}
+            <Line points={[[0, 0, 0], [limit, 0, 0]]} color="#64748b" lineWidth={3} />
             
-            {/* Cardinal Labels (N=-Z, S=+Z, E=+X, W=-X in this coord system) */}
-            <AxisLabel position={[0, 0, -gridRadius * 1.05]} text="North" color="#64748b" fontSize={120} />
-            <AxisLabel position={[0, 0, gridRadius * 1.05]} text="South" color="#64748b" fontSize={120} />
-            <AxisLabel position={[gridRadius * 1.05, 0, 0]} text="East" color="#64748b" fontSize={120} />
-            <AxisLabel position={[-gridRadius * 1.05, 0, 0]} text="West" color="#64748b" fontSize={120} />
+            {/* Cardinal Labels */}
+            <AxisLabel position={[0, 20, -limit]} text="North" color="#1e293b" fontSize={60} anchorY="bottom" />
+            <AxisLabel position={[0, 20, limit]} text="South" color="#1e293b" fontSize={60} anchorY="bottom" />
+            <AxisLabel position={[limit, 20, 0]} text="East" color="#1e293b" fontSize={60} anchorY="bottom" />
+            <AxisLabel position={[-limit, 20, 0]} text="West" color="#1e293b" fontSize={60} anchorY="bottom" />
 
-             {/* Numeric Ticks on Floor */}
-             {floorTicks.map(t => (
-                <React.Fragment key={t}>
-                    {/* East (+X) */}
-                    <AxisLabel position={[t, 0, 0]} text={`${t}`} fontSize={40} color="#94a3b8" />
-                    {/* West (-X) */}
-                    <AxisLabel position={[-t, 0, 0]} text={`${t}`} fontSize={40} color="#94a3b8" />
-                    {/* South (+Z) */}
-                    <AxisLabel position={[0, 0, t]} text={`${t}`} fontSize={40} color="#94a3b8" />
-                    {/* North (-Z) */}
-                    <AxisLabel position={[0, 0, -t]} text={`${t}`} fontSize={40} color="#94a3b8" />
+             {/* Numeric Ticks */}
+             {floorTicks.map((val, i) => (
+                <React.Fragment key={i}>
+                    {/* X Axis Labels */}
+                    <AxisLabel position={[val, 10, 0]} text={`${Math.abs(val)}m`} fontSize={60} color="#334155" anchorY="bottom" />
+                    {/* Z Axis Labels */}
+                    <AxisLabel position={[0, 10, val]} text={`${Math.abs(val)}m`} fontSize={60} color="#334155" anchorY="bottom" />
                 </React.Fragment>
              ))}
         </group>
@@ -460,34 +459,33 @@ interface SceneProps {
   config: SimulationConfig;
   telemetryRef: React.MutableRefObject<TelemetryPoint | undefined>;
   staticDepth: number;
+  currentHoleDepth: number;
 }
 
-const Visualization3DComponent: React.FC<SceneProps> = ({ config, telemetryRef, staticDepth }) => {
+const Visualization3DComponent: React.FC<SceneProps> = ({ config, telemetryRef }) => {
   const maxDepth = config.wellPath[config.wellPath.length-1].md;
   
   return (
     <div className="w-full h-full bg-slate-50 overflow-hidden border-l border-slate-200 relative shadow-inner">
       <Canvas shadows>
         <PerspectiveCamera makeDefault position={[400, 100, 400]} fov={50} near={1} far={50000} />
-        
         <ambientLight intensity={0.7} />
         <pointLight position={[500, 500, 500]} intensity={0.8} castShadow />
         <directionalLight position={[-500, 1000, 500]} intensity={1.0} castShadow />
 
         <group>
-            <WellBore config={config} />
+            <WellBore config={config} telemetryRef={telemetryRef} />
             <DetailedDrillString config={config} />
             <BitMarker config={config} telemetryRef={telemetryRef} />
             <AnnotatedAxes config={config} />
         </group>
         
         <color attach="background" args={['#f8fafc']} />
-        <fog attach="fog" args={['#f8fafc', 2000, 20000]} />
-        
+        <fog attach="fog" args={['#f8fafc', 3000, 50000]} />
         <OrbitControls target={[0, -maxDepth/2, 0]} />
       </Canvas>
       
-      <div className="absolute top-4 right-4 z-10 bg-white/80 p-3 rounded border border-slate-200 text-xs text-slate-600 backdrop-blur-sm pointer-events-none">
+      <div className="absolute top-4 right-4 z-10 bg-white/80 p-3 rounded border border-slate-200 text-xs text-slate-600 backdrop-blur-sm pointer-events-none select-none">
         <div className="font-bold mb-1">Visualization</div>
         <div>Left Click: Rotate</div>
         <div>Right Click: Pan</div>

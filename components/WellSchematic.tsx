@@ -7,9 +7,10 @@ interface Props {
   maxDepth: number;
   drillString?: StringComponent[];
   rpm?: number;
+  holeDepth?: number;
 }
 
-const WellSchematicComponent: React.FC<Props> = ({ sections, maxDepth, drillString = [], rpm = 0 }) => {
+const WellSchematicComponent: React.FC<Props> = ({ sections, maxDepth, drillString = [], rpm = 0, holeDepth = 0 }) => {
   // Dimensions
   const width = 600;
   const height = 800; 
@@ -97,22 +98,39 @@ const WellSchematicComponent: React.FC<Props> = ({ sections, maxDepth, drillStri
           const bottomY = paddingY + (section.md_bottom * scaleY);
           const heightPx = bottomY - topY;
           const rOuter = (section.od / 2) * scaleX;
-          const fill = section.type === SectionType.OPEN_HOLE ? '#fff' : '#d1d5db';
-          const opacity = section.type === SectionType.OPEN_HOLE ? 0.5 : 1.0;
+          
+          const isCasing = section.type !== SectionType.OPEN_HOLE;
+          const fill = isCasing ? '#d1d5db' : '#fff';
+          const opacity = isCasing ? 1.0 : 0.5;
+          
+          // For Open Hole, clip height based on holeDepth
+          let displayHeight = heightPx;
+          if (!isCasing && holeDepth > 0) {
+              const sectionHoleEnd = Math.min(section.md_bottom, holeDepth);
+              const relativeEnd = sectionHoleEnd - section.md_top;
+              if (relativeEnd <= 0) return null; // Not drilled yet
+              displayHeight = relativeEnd * scaleY;
+          }
 
           return (
             <g key={`body-${section.id}`}>
-              <rect x={centerX - rOuter} y={topY} width={rOuter * 2} height={heightPx} fill={fill} opacity={opacity} />
-              {section.type !== SectionType.OPEN_HOLE && (
+              <rect x={centerX - rOuter} y={topY} width={rOuter * 2} height={displayHeight} fill={fill} opacity={opacity} />
+              {isCasing && (
                 <>
                   <line x1={centerX - rOuter} y1={topY} x2={centerX - rOuter} y2={bottomY} stroke="#000" strokeWidth="1.5" />
                   <line x1={centerX + rOuter} y1={topY} x2={centerX + rOuter} y2={bottomY} stroke="#000" strokeWidth="1.5" />
                 </>
               )}
-              {section.type === SectionType.OPEN_HOLE && (
+              {!isCasing && (
                 <>
-                   <line x1={centerX - rOuter} y1={topY} x2={centerX - rOuter} y2={bottomY} stroke="#64748b" strokeWidth="1" strokeDasharray="6 4" />
-                   <line x1={centerX + rOuter} y1={topY} x2={centerX + rOuter} y2={bottomY} stroke="#64748b" strokeWidth="1" strokeDasharray="6 4" />
+                   {/* Drilled Part */}
+                   <line x1={centerX - rOuter} y1={topY} x2={centerX - rOuter} y2={topY + displayHeight} stroke="#64748b" strokeWidth="1" strokeDasharray="6 4" />
+                   <line x1={centerX + rOuter} y1={topY} x2={centerX + rOuter} y2={topY + displayHeight} stroke="#64748b" strokeWidth="1" strokeDasharray="6 4" />
+                   
+                   {/* Undrilled Target Line */}
+                   {holeDepth < section.md_bottom && (
+                       <line x1={centerX} y1={topY + displayHeight} x2={centerX} y2={bottomY} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="4 4" />
+                   )}
                 </>
               )}
             </g>
@@ -131,12 +149,21 @@ const WellSchematicComponent: React.FC<Props> = ({ sections, maxDepth, drillStri
            const activeSections = sections.filter(s => s.md_top <= midMd && s.md_bottom >= midMd);
            if (activeSections.length === 0) return null;
            const innermost = activeSections.reduce((prev, curr) => prev.od < curr.od ? prev : curr);
+           
+           // Check if this segment is actually drilled
+           if (innermost.type === SectionType.OPEN_HOLE && holeDepth > 0 && startMd >= holeDepth) return null;
+
            const rInner = (innermost.id_hole / 2) * scaleX;
            const sliceTopY = paddingY + (startMd * scaleY);
-           const sliceHeight = (endMd - startMd) * scaleY;
+           let sliceHeight = (endMd - startMd) * scaleY;
+           
+           // Clip void for open hole
+           if (innermost.type === SectionType.OPEN_HOLE && holeDepth > 0 && endMd > holeDepth) {
+               sliceHeight = (holeDepth - startMd) * scaleY;
+           }
 
            return (
-             <rect key={`void-${i}`} x={centerX - rInner} y={sliceTopY} width={rInner * 2} height={sliceHeight} fill="#ffffff" />
+             <rect key={`void-${i}`} x={centerX - rInner} y={sliceTopY} width={rInner * 2} height={Math.max(0, sliceHeight)} fill="#ffffff" />
            );
         })}
 
@@ -275,6 +302,14 @@ const WellSchematicComponent: React.FC<Props> = ({ sections, maxDepth, drillStri
               </g>
            )
         })}
+        
+        {/* Hole Depth Marker */}
+        {holeDepth > 0 && holeDepth < maxMD && (
+          <g transform={`translate(0, ${paddingY + (holeDepth * scaleY)})`}>
+             <line x1={40} y1={0} x2={width-40} y2={0} stroke="#ef4444" strokeWidth="1" strokeDasharray="2 2" />
+             <text x={width-50} y={-5} fontSize="10" fill="#ef4444" fontWeight="bold" textAnchor="end">HOLE DEPTH</text>
+          </g>
+        )}
       </svg>
     </div>
   );
