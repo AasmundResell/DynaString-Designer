@@ -1,0 +1,17 @@
+
+setup:
+  CFL: 0.9
+  Nn: 10
+  v0: 0.3
+  mesh:
+    type: structured
+    nodes:
+      - 0.0
+      - 0.5
+      - 1.0
+      - 1.5
+      - 2.0 
+    hallaballa: 10
+    this:
+      das: hehe
+  time_integration: rk4

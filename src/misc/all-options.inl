@@ -1,0 +1,193 @@
+#include "misc/includes.hpp"
+/*This file is only intended to be included once (in input-parser)*/
+#ifdef ALL_OPTIONS_INL
+#error "File has been included more than once"
+#define ALL_OPTIONS_INL
+#endif
+
+// clang-format off
+const std::set<string> all_options {
+    "setup/n_threads",
+    "setup/dS_min_node",
+    "setup/dS_min_riemann_cell",
+    "setup/dS_max_render",
+    "setup/dS_max_contact",
+    "setup/N_stab",
+    "setup/N_tj",
+    "setup/riemann_solver",
+    "setup/at_subcycling",
+    "setup/CFL_at",
+    "setup/use_gpu",
+    "setup/CFL",
+    "setup/n_max",
+    "setup/t_max",
+    "setup/save_csv",
+    "setup/write_misc_quantities",
+    "setup/n_write",
+    "setup/pipe_solver_type",
+    "setup/initialization",
+    "setup/t_init",
+    "setup/radial_unit",
+
+    "curvilinear/curvature_enabled",
+    "curvilinear/curvilinear_integration_type",
+    "curvilinear/gauss-legendre_integration_order",
+    "curvilinear/beam_stiffness_2nd_order",
+    "curvilinear/linear_strain_energy_enabled",
+    "curvilinear/static_load_update_interval",
+    "curvilinear/output_global_frame",
+
+    "corotational/check_energy_balance",
+    "corotational/energy_balance_tol",
+    "corotational/corotational_formulation",
+    "corotational/output_curvlin_frame",
+
+    "properties/gravity_enabled",
+    "properties/L_string_depth_initial",
+    "properties/L_hole_depth_initial",
+    "properties/young_modulus",
+    "properties/poisson_ratio",
+    "properties/pipe_density",
+    
+    "properties/fluid_properties/fluid_dynamics_enabled",
+    "properties/fluid_properties/fsi_force_model",
+    "properties/fluid_properties/fsi_torque_model",
+    "properties/fluid_properties/fluid_density_inner",
+    "properties/fluid_properties/fluid_density_outer",
+    "properties/fluid_properties/standpipe_pressure",
+    "properties/fluid_properties/fluid_viscosity",
+    "properties/fluid_properties/flow_rate",
+    
+    "properties/contact_properties/contact_enabled",
+    "properties/contact_properties/Nc_iter",
+    "properties/contact_properties/K_normal",
+    "properties/contact_properties/C_normal",
+    "properties/contact_properties/K_tangent",
+    "properties/contact_properties/C_tangent",
+    "properties/contact_properties/stribeck_velocity",
+    "properties/contact_properties/mu_static",
+    "properties/contact_properties/mu_kinetic",
+    "properties/damping_properties/rayleigh_damping_enabled",
+    "properties/damping_properties/alpha",
+    "properties/damping_properties/beta",
+    
+    "properties/string_type",
+    "properties/WOB",
+    "properties/TOB",
+    "properties/eccentricity_control",
+    
+    
+    "properties/top_drive/kinematics",
+    "properties/top_drive/v_top",
+    "properties/top_drive/omega_top",
+    "properties/top_drive/mass",
+    "properties/top_drive/inertia",
+    "properties/top_drive/torque_controller",
+    "properties/top_drive/PID_Kp",
+    "properties/top_drive/PID_Ki",
+    "properties/top_drive/PID_Kd",
+    
+    "properties/bit_rock/model",
+    "properties/bit_rock/rock_cutting_analytical",
+    // Detournay parameters
+    "properties/bit_rock/n_blades",
+    "properties/bit_rock/mass",
+    "properties/bit_rock/inertia",
+    "properties/bit_rock/epsilon",
+    "properties/bit_rock/sigma",
+    "properties/bit_rock/l",
+    "properties/bit_rock/xi",
+    "properties/bit_rock/gamma",
+    "properties/bit_rock/mu",
+    // Tucker-Wang parameters
+    "properties/bit_rock/a0",
+    "properties/bit_rock/a1",
+    "properties/bit_rock/a2",
+    "properties/bit_rock/a3",
+    "properties/bit_rock/a4",
+    // Regularization parameters
+    "properties/bit_rock/e_reg",
+    "properties/bit_rock/e_heaviside",
+    "properties/bit_rock/e_ramp",
+    "properties/bit_rock/e_sign",
+    "properties/bit_rock/tol_heaviside",
+    "properties/bit_rock/tol_ramp",
+
+
+    "hole",
+    "hole/trajectory_build_type",
+    "hole/input_build_type",
+    "hole/ds_target",
+    "hole/n_hole",
+    "hole/n_interpolate",
+    "hole/MD",
+    "hole/inclinations",
+    "hole/azimuths",
+    "hole/L_build",
+    "hole/L_front",
+    "hole/L_end",
+    "hole/inclination_top",
+    "hole/inclination_build",
+    "hole/azimuth_top",
+    "hole/azimuth_build",
+    "hole/sections",
+    "hole/sections/surface_type",
+    "hole/sections/diameter",
+    "hole/sections/diameters",
+    "hole/sections/a_mean",
+    "hole/sections/b_mean",
+    "hole/sections/offset_build_type",
+    "hole/sections/cross_section_build_type",
+    "hole/sections/pitch",
+    "hole/sections/diameter_spiral",
+    "hole/sections/diameter_drift",
+    "hole/sections/max_curvature",
+    "hole/sections/std_radial",
+    "hole/sections/std_ellipse_angle",
+    "hole/sections/std_diameter_spiral",
+    "hole/sections/std_pitch",
+    "hole/sections/std_offset_noise",
+    "hole/sections/cor_radial",
+    "hole/sections/cor_ellipse_angle",
+    "hole/sections/cor_diameter_spiral",
+    "hole/sections/cor_pitch",
+    "hole/sections/cor_offset_noise",
+
+    "pipe/component_id",
+    "pipe/component_count",
+    "pipe/unique_components",
+    "pipe/unique_components/type",
+    "pipe/unique_components/name",
+    "pipe/unique_components/L",
+    "pipe/unique_components/D_outer",
+    "pipe/unique_components/D_inner",
+    "pipe/unique_components/D_tooljoint",
+    "pipe/unique_components/L_tooljoint",
+    "pipe/unique_components/D_stabilizer",
+    "pipe/unique_components/L_stabilizer",
+    "pipe/unique_components/S_stabilizer",
+    "pipe/unique_components/S_sensor",
+    "pipe/unique_components/L_sensor",
+    "pipe/unique_components/steering_type",
+    "pipe/unique_components/mass_imbalance",
+    "pipe/centralizer_dS",
+    "pipe/centralizer_count",
+    "pipe/centralizer_types",
+    "pipe/bow-spring/D_bs_outer",
+    "pipe/bow-spring/D_bs_inner",
+    "pipe/bow-spring/K_bs",
+    "pipe/bow-spring/C_bs",
+    "pipe/bow-spring/N_bs",
+    "pipe/bow-spring/p_bs"
+};
+
+
+const set<string> component_common_keys = {"type", "L", "D_outer", "D_inner", "name"};
+const set<string> component_drill_pipe_keys = {"D_tooljoint", "L_tooljoint", "mass_imbalance"};
+const set<string> component_mwd_keys = {"S_sensor", "L_sensor", "mass_imbalance"};
+const set<string> component_sub_keys = {};
+const set<string> component_stabilizer_keys = {"S_stabilizer", "D_stabilizer", "L_stabilizer", "mass_imbalance"};
+const set<string> component_steering_keys = {"steering_type"};
+const set<string> component_casing_keys = {};
+
+// clang-format on

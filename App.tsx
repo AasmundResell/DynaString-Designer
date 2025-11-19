@@ -1,8 +1,8 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { ViewMode, SimulationConfig, TelemetryPoint } from './types';
+import { ViewMode, SimulationConfig, TelemetryPoint, SolverFrameData } from './types';
 import { DEFAULT_CONFIG } from './constants';
-import { MockSimulator } from './services/simulator';
+import { solverService } from './services/solverApi';
 import { ConfigurationPanel } from './components/ConfigurationPanel';
 import { Visualization3D } from './components/Visualization3D';
 import { WellSchematic } from './components/WellSchematic';
@@ -17,8 +17,6 @@ const App: React.FC = () => {
   const [currentPoint, setCurrentPoint] = useState<TelemetryPoint | undefined>(undefined);
   const [visualMode, setVisualMode] = useState<'3d' | '2d'>('3d');
   
-  const simulatorRef = useRef<MockSimulator | null>(null);
-  
   // Use a Ref for telemetry to pass to 3D view without causing re-renders of the 3D component
   const telemetryRef = useRef<TelemetryPoint | undefined>(undefined);
 
@@ -30,53 +28,91 @@ const App: React.FC = () => {
 
   const staticDepth = maxWellDepth * 0.5;
 
-  // Initialize simulator instance
+  // Initialize simulator connection
   useEffect(() => {
-    simulatorRef.current = new MockSimulator(config.operations);
-    
     let lastUpdate = 0;
-    const unsubscribe = simulatorRef.current.subscribe((data) => {
+
+    const handleData = (data: SolverFrameData) => {
+      // Map Solver Data to UI Telemetry Format
+      const telemetryPoint: TelemetryPoint = {
+        timestamp: data.time,
+        depth: data.depth,
+        rpmBit: data.rpm,
+        rpmSurf: data.rpm, // Assuming top drive = bit for now
+        wob: 50 + Math.sin(data.time) * 5, // Mock WOB for now (until solver sends it)
+        tob: 10 + Math.cos(data.time) * 2, // Mock TOB for now
+        hookLoad: 100,
+        rop: 20,
+        vibration: 0.1
+      };
+
       // Update Ref for 3D view (Immediate - for smooth 60fps animation)
-      telemetryRef.current = data;
+      telemetryRef.current = telemetryPoint;
       
       // Throttle State Update for UI (Charts/KPIs) to ~10fps to prevent React lag
       const now = Date.now();
       if (now - lastUpdate > 100) {
         lastUpdate = now;
-        setCurrentPoint(data);
+        setCurrentPoint(telemetryPoint);
         setTelemetryData(prev => {
-          const newData = [...prev, data];
+          const newData = [...prev, telemetryPoint];
           if (newData.length > 100) newData.shift(); // Keep buffer size manageable
           return newData;
         });
       }
-    });
+    };
+
+    solverService.connectDataStream(handleData);
 
     return () => {
-      unsubscribe();
-      simulatorRef.current?.stop();
+      solverService.disconnect();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Run once on mount
 
   // Update simulator params when config changes (if running)
   useEffect(() => {
-    if (simulatorRef.current) {
-      simulatorRef.current.updateParams(config.operations);
+    if (isRunning) {
+      solverService.updateControl({
+        v_top_input: config.operations.rop_target / 3600, // Convert m/hr to m/s
+        omega_top_input: config.operations.rpm_target * 0.10472 // Convert RPM to rad/s
+      }).catch(console.error);
     }
-  }, [config.operations]);
+  }, [config.operations, isRunning]);
 
-  const startSimulation = () => {
+  const startSimulation = async () => {
     setTelemetryData([]); // Clear old data
-    simulatorRef.current?.start();
-    setIsRunning(true);
+    try {
+      await solverService.startSimulation({
+        // Map initial config to SolverConfigStatic
+        L: 1000, // TODO: Calculate from drillString
+        L_string_depth_initial: 0,
+        dt: 0.001,
+        E: 210e9,
+        nu: 0.3,
+        rho_p: 7850,
+        rho_fi: 1000,
+        rho_fo: 1000,
+        v_top_input: config.operations.rop_target / 3600,
+        omega_top_input: config.operations.rpm_target * 0.10472,
+        r_br: 0.1,
+        m_br: 50
+      });
+      setIsRunning(true);
+    } catch (e) {
+      console.error("Failed to start simulation", e);
+      alert("Failed to connect to solver. Is the backend running?");
+    }
   };
 
-  const stopSimulation = () => {
-    simulatorRef.current?.stop();
-    setIsRunning(false);
-    setCurrentPoint(undefined);
-    telemetryRef.current = undefined;
+  const stopSimulation = async () => {
+    try {
+      await solverService.stopSimulation();
+      setIsRunning(false);
+      setCurrentPoint(undefined);
+      telemetryRef.current = undefined;
+    } catch (e) {
+      console.error("Failed to stop simulation", e);
+    }
   };
 
   const toggleSimulation = () => {

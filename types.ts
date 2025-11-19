@@ -109,6 +109,50 @@ export interface TrajectoryPoint3D {
   md: number;
 }
 
+// --- C++ Solver Integration Types ---
+
+// Matches ConfigStatic in C++
+export interface SolverConfigStatic {
+  // Basic Dimensions
+  L: number;
+  L_string_depth_initial: number;
+  
+  // Time Integration
+  dt: number;
+  
+  // Physical Properties
+  E: number;
+  nu: number;
+  rho_p: number;
+  
+  // Fluid
+  rho_fi: number;
+  rho_fo: number;
+  
+  // Operation (Initial)
+  v_top_input: number;
+  omega_top_input: number;
+  
+  // Bit Rock
+  r_br: number;
+  m_br: number;
+}
+
+// Data streamed from C++ per frame
+export interface SolverFrameData {
+  time: number;
+  depth: number;
+  rpm: number;
+  // Arrays for spatial plots (matching GUI_Manager extraction)
+  points: {
+    s: number; // Arc length
+    x: number; // Global X
+    y: number; // Global Y
+    z: number; // Global Z
+    tension?: number;
+  }[];
+}
+
 // --- AI Types ---
 
 export interface ChatMessage {

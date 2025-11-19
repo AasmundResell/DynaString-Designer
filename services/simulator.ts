@@ -61,6 +61,7 @@ export class MockSimulator {
         timestamp: this.currentTime,
         depth: this.currentDepth,
         hookLoad: Math.max(0, hookLoad),
+        
         wob: Math.max(0, wob),
         tob: Math.max(0, tob),
         rpmSurf: Math.max(0, rpmSurf),
