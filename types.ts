@@ -77,6 +77,8 @@ export interface OperationParams {
   wob_target: number;
   rop_target: number; // m/hr
   flow_rate: number;
+  initial_bit_depth: number; // Initial depth of the bit (Feed Depth)
+  initial_hole_depth: number; // Initial depth of the drilled hole
 }
 
 export interface SimulationConfig {

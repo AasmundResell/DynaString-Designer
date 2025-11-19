@@ -1,8 +1,9 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { SimulationConfig, WellPoint, StringComponent, ComponentType, SectionType, WellSection } from '../types';
-import { AVAILABLE_COMPONENTS } from '../constants';
-import { Plus, Trash2, GripVertical, Activity, Map, ArrowDown, X, Info, AlertTriangle, Edit2, Hammer, Sliders, Zap } from 'lucide-react';
+import { COMPONENT_CATALOG } from '../catalog';
+import { Plus, Trash2, GripVertical, Activity, Map, ArrowDown, X, Info, AlertTriangle, Edit2, Hammer, Sliders, Zap, Upload, ChevronDown } from 'lucide-react';
+import jsyaml from 'js-yaml';
 
 interface Props {
   config: SimulationConfig;
@@ -41,8 +42,167 @@ export const ConfigurationPanel: React.FC<Props> = ({ config, setConfig }) => {
   const [activeTab, setActiveTab] = useState<'well' | 'string' | 'physics'>('well');
   const [draggedItemIndex, setDraggedItemIndex] = useState<number | null>(null);
   const [selectedComponentId, setSelectedComponentId] = useState<string | null>(null);
+  const [libraryCategory, setLibraryCategory] = useState<ComponentType>(ComponentType.DRILL_PIPE);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const validationErrors = useMemo(() => validateWellArchitecture(config.sections), [config.sections]);
+
+  // --- YAML Import Logic ---
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const content = ev.target?.result as string;
+        const data: any = jsyaml.load(content);
+        parseAndApplyConfig(data);
+      } catch (err) {
+        console.error("Failed to parse YAML", err);
+        alert("Error parsing YAML file. Please check the console.");
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const parseAndApplyConfig = (data: any) => {
+    const newConfig = { ...config };
+
+    // 1. Trajectory (Hole)
+    if (data.hole) {
+       const md = data.hole.MD || [];
+       const inc = data.hole.inclinations || [];
+       const azi = data.hole.azimuths || [];
+       const points: WellPoint[] = md.map((m: number, i: number) => ({
+         md: m,
+         inclination: inc[i] ?? 0,
+         azimuth: azi[i] ?? 0
+       }));
+       if(points.length > 0) newConfig.wellPath = points;
+
+       // 2. Well Architecture (Sections)
+       if (data.hole.sections) {
+          const maxDepth = points[points.length - 1].md;
+          const sections: WellSection[] = data.hole.sections.map((s: any, i: number, arr: any[]) => {
+             const nextSec = arr[i + 1];
+             const mdBottom = nextSec ? nextSec.depth : maxDepth;
+             
+             // Heuristic for Section Type based on name
+             const nameLower = (s.name || "").toLowerCase();
+             let type = SectionType.CASING;
+             if (nameLower.includes('open hole')) type = SectionType.OPEN_HOLE;
+             else if (nameLower.includes('liner')) type = SectionType.LINER;
+
+             // Default ID/OD logic if not explicit
+             const od = s.diameter || 20;
+             const id = s.diameter_drift || s.diameter * 0.9;
+
+             return {
+               id: Math.random().toString(36).substr(2, 9),
+               name: s.name || `Section ${i+1}`,
+               type: type,
+               md_top: s.depth,
+               md_bottom: mdBottom,
+               od: parseFloat(od.toFixed(3)),
+               id_hole: parseFloat(id.toFixed(3))
+             };
+          });
+          newConfig.sections = sections;
+       }
+    }
+
+    // 3. Drill String (Pipe)
+    if (data.pipe) {
+       const unique = data.pipe.unique_components || [];
+       const ids = data.pipe.component_id || [];
+       const counts = data.pipe.component_count || [];
+       
+       const stringComponents: StringComponent[] = [];
+
+       for(let i = 0; i < ids.length; i++) {
+          const idIdx = ids[i];
+          const compDef = unique[idIdx];
+          if (!compDef) continue;
+
+          const count = counts[i] || 1;
+          
+          // Map Component Type
+          let type = ComponentType.DRILL_PIPE;
+          const typeStr = (compDef.type || "").toLowerCase();
+          if (typeStr.includes('hwdp')) type = ComponentType.HWDP;
+          else if (typeStr.includes('collar')) type = ComponentType.DRILL_COLLAR;
+          else if (typeStr.includes('stabilizer')) type = ComponentType.STABILIZER;
+          else if (typeStr.includes('jar')) type = ComponentType.JAR;
+          else if (typeStr.includes('bit')) type = ComponentType.BIT;
+          else if (typeStr.includes('sub') || typeStr.includes('mwd')) type = ComponentType.SUB;
+
+          const newComp: StringComponent = {
+             id: Math.random().toString(36).substr(2, 9),
+             name: compDef.name || "Unknown Component",
+             type: type,
+             od: compDef.D_outer || 5.0,
+             id_pipe: compDef.D_inner || 4.0,
+             length: compDef.L || 10.0,
+             weight: 30, // Default weight, not typically in this specific yaml format, would need density calc
+             count: count,
+          };
+
+          // Handle Stabilizer Specifics
+          if (type === ComponentType.STABILIZER && compDef.D_stabilizer) {
+             newComp.stabilizer = {
+                bladeOd: compDef.D_stabilizer,
+                bladeLength: compDef.L_stabilizer || 1.0,
+                distFromBottom: compDef.S_stabilizer || 0.5
+             };
+          }
+
+          stringComponents.push(newComp);
+       }
+       if(stringComponents.length > 0) newConfig.drillString = stringComponents;
+    }
+
+    // 4. Simulation Parameters (Properties)
+    if (data.properties) {
+       const props = data.properties;
+       
+       // Bit/Rock
+       if (props.bit_rock) {
+          newConfig.bitRock = {
+             ...newConfig.bitRock,
+             mu: props.bit_rock.mu ?? newConfig.bitRock.mu,
+             epsilon: props.bit_rock.epsilon ?? newConfig.bitRock.epsilon,
+             sigma: props.bit_rock.sigma ?? newConfig.bitRock.sigma,
+             gamma: props.bit_rock.gamma ?? newConfig.bitRock.gamma,
+             n_blades: props.bit_rock.n_blades ?? newConfig.bitRock.n_blades,
+          };
+       }
+
+       // Contact
+       if (props.contact_properties) {
+          newConfig.contact = {
+             ...newConfig.contact,
+             mu_static: props.contact_properties.mu_static ?? newConfig.contact.mu_static,
+             mu_kinetic: props.contact_properties.mu_kinetic ?? newConfig.contact.mu_kinetic,
+             stribeck_velocity: props.contact_properties.stribeck_velocity ?? newConfig.contact.stribeck_velocity,
+          };
+       }
+
+       // Operations (Top Drive)
+       if (props.top_drive) {
+          newConfig.operations = {
+             ...newConfig.operations,
+             rpm_target: props.top_drive.omega_top ?? newConfig.operations.rpm_target,
+             rop_target: props.top_drive.v_top ?? newConfig.operations.rop_target,
+             // Flow rate and WOB might not be in top_drive, keep existing
+          };
+       }
+    }
+
+    setConfig(newConfig);
+    alert("Configuration imported successfully!");
+  };
+
 
   // --- Well & Section Handlers ---
   const updateWellPoint = (index: number, field: keyof WellPoint, value: number) => {
@@ -134,7 +294,7 @@ export const ConfigurationPanel: React.FC<Props> = ({ config, setConfig }) => {
   };
 
   // --- Drill String Handlers ---
-  const addComponent = (comp: StringComponent) => {
+  const addComponent = (comp: Omit<StringComponent, 'id' | 'count'>) => {
     if (comp.type === ComponentType.BIT) {
       if (config.drillString.some(c => c.type === ComponentType.BIT)) {
          alert("The assembly already has a bit.");
@@ -188,7 +348,22 @@ export const ConfigurationPanel: React.FC<Props> = ({ config, setConfig }) => {
 
   // --- Physics Handlers ---
   const updateOperations = (field: string, value: number) => {
-    setConfig({ ...config, operations: { ...config.operations, [field]: value }});
+    const newOps = { ...config.operations, [field]: value };
+    
+    // Constraint: Bit Depth (Feed Depth) cannot be greater than Hole Depth
+    if (field === 'initial_bit_depth') {
+       if (newOps.initial_bit_depth > newOps.initial_hole_depth) {
+          newOps.initial_bit_depth = newOps.initial_hole_depth;
+       }
+    } 
+    // Constraint: If Hole Depth reduces below Bit Depth, clamp Bit Depth
+    else if (field === 'initial_hole_depth') {
+       if (newOps.initial_hole_depth < newOps.initial_bit_depth) {
+          newOps.initial_bit_depth = newOps.initial_hole_depth;
+       }
+    }
+
+    setConfig({ ...config, operations: newOps });
   };
 
   const updateContact = (field: string, value: number) => {
@@ -236,16 +411,33 @@ export const ConfigurationPanel: React.FC<Props> = ({ config, setConfig }) => {
 
   return (
     <div className="flex flex-col h-full bg-slate-50 text-slate-900">
-      <div className="flex border-b border-slate-200 bg-white overflow-x-auto scrollbar-hide shrink-0">
-        <button onClick={() => setActiveTab('well')} className={`flex items-center gap-2 px-6 py-4 text-sm font-medium transition-colors whitespace-nowrap ${activeTab === 'well' ? 'bg-slate-50 text-cyan-600 border-b-2 border-cyan-600' : 'text-slate-500 hover:text-slate-800'}`}>
-          <Map size={18} /> Well Arch
-        </button>
-        <button onClick={() => setActiveTab('string')} className={`flex items-center gap-2 px-6 py-4 text-sm font-medium transition-colors whitespace-nowrap ${activeTab === 'string' ? 'bg-slate-50 text-cyan-600 border-b-2 border-cyan-600' : 'text-slate-500 hover:text-slate-800'}`}>
-          <ArrowDown size={18} /> Drill String
-        </button>
-        <button onClick={() => setActiveTab('physics')} className={`flex items-center gap-2 px-6 py-4 text-sm font-medium transition-colors whitespace-nowrap ${activeTab === 'physics' ? 'bg-slate-50 text-cyan-600 border-b-2 border-cyan-600' : 'text-slate-500 hover:text-slate-800'}`}>
-          <Activity size={18} /> Physics
-        </button>
+      <div className="flex justify-between items-center border-b border-slate-200 bg-white shrink-0">
+        <div className="flex overflow-x-auto scrollbar-hide">
+            <button onClick={() => setActiveTab('well')} className={`flex items-center gap-2 px-6 py-4 text-sm font-medium transition-colors whitespace-nowrap ${activeTab === 'well' ? 'bg-slate-50 text-cyan-600 border-b-2 border-cyan-600' : 'text-slate-500 hover:text-slate-800'}`}>
+            <Map size={18} /> Well Arch
+            </button>
+            <button onClick={() => setActiveTab('string')} className={`flex items-center gap-2 px-6 py-4 text-sm font-medium transition-colors whitespace-nowrap ${activeTab === 'string' ? 'bg-slate-50 text-cyan-600 border-b-2 border-cyan-600' : 'text-slate-500 hover:text-slate-800'}`}>
+            <ArrowDown size={18} /> Drill String
+            </button>
+            <button onClick={() => setActiveTab('physics')} className={`flex items-center gap-2 px-6 py-4 text-sm font-medium transition-colors whitespace-nowrap ${activeTab === 'physics' ? 'bg-slate-50 text-cyan-600 border-b-2 border-cyan-600' : 'text-slate-500 hover:text-slate-800'}`}>
+            <Activity size={18} /> Physics
+            </button>
+        </div>
+        <div className="pr-4">
+            <input 
+                type="file" 
+                ref={fileInputRef} 
+                onChange={handleFileUpload} 
+                accept=".yml,.yaml" 
+                className="hidden" 
+            />
+            <button 
+                onClick={() => fileInputRef.current?.click()}
+                className="flex items-center gap-2 text-xs font-bold text-slate-600 hover:text-cyan-600 transition-colors bg-slate-100 hover:bg-cyan-50 px-3 py-1.5 rounded border border-slate-200"
+            >
+                <Upload size={14} /> Import Config
+            </button>
+        </div>
       </div>
 
       <div className="flex-1 overflow-hidden p-4 flex flex-col">
@@ -388,12 +580,35 @@ export const ConfigurationPanel: React.FC<Props> = ({ config, setConfig }) => {
             <div className="flex-1 flex gap-4 min-h-0">
                {/* Library */}
                <div className="w-1/3 flex flex-col bg-white rounded-lg border border-slate-200 shadow-sm">
-                 <div className="p-2 border-b border-slate-100 font-semibold text-xs text-slate-600 uppercase bg-slate-50 rounded-t-lg">Library</div>
+                 <div className="p-2 border-b border-slate-100 bg-slate-50 rounded-t-lg">
+                   <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Component Category</label>
+                   <div className="relative">
+                     <select 
+                       value={libraryCategory} 
+                       onChange={(e) => setLibraryCategory(e.target.value as ComponentType)}
+                       className="w-full appearance-none bg-white border border-slate-300 rounded px-2 py-1.5 text-xs font-semibold text-slate-700 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500"
+                     >
+                        <option value={ComponentType.DRILL_PIPE}>Drill Pipe</option>
+                        <option value={ComponentType.HWDP}>HWDP</option>
+                        <option value={ComponentType.DRILL_COLLAR}>Drill Collars</option>
+                        <option value={ComponentType.STABILIZER}>Stabilizers</option>
+                        <option value={ComponentType.BIT}>Bits</option>
+                        <option value={ComponentType.SUB}>Subs / MWD / LWD</option>
+                        <option value={ComponentType.JAR}>Jars</option>
+                     </select>
+                     <ChevronDown size={14} className="absolute right-2 top-2 text-slate-400 pointer-events-none" />
+                   </div>
+                 </div>
+                 
                  <div className="flex-1 overflow-y-auto p-2 space-y-2">
-                    {AVAILABLE_COMPONENTS.map((comp) => (
-                      <div key={comp.id} onClick={() => addComponent(comp)} className="bg-white p-2 rounded border border-slate-200 hover:border-cyan-500 cursor-pointer text-xs shadow-sm group">
+                    {COMPONENT_CATALOG[libraryCategory]?.map((comp, idx) => (
+                      <div key={idx} onClick={() => addComponent(comp)} className="bg-white p-2 rounded border border-slate-200 hover:border-cyan-500 cursor-pointer text-xs shadow-sm group transition-all hover:shadow-md">
                          <div className="font-medium text-slate-700 group-hover:text-cyan-700">{comp.name}</div>
-                         <div className="text-[10px] text-slate-400">OD: {comp.od}"</div>
+                         <div className="flex justify-between text-[10px] text-slate-400 mt-1">
+                            <span>OD: {comp.od}"</span>
+                            <span>ID: {comp.id_pipe}"</span>
+                            <span>{comp.weight} kg/m</span>
+                         </div>
                       </div>
                     ))}
                  </div>
@@ -553,6 +768,24 @@ export const ConfigurationPanel: React.FC<Props> = ({ config, setConfig }) => {
                    <h3 className="font-bold text-slate-700 text-sm uppercase">Operational Parameters</h3>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
+                   <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase">Feed Depth (m)</label>
+                      <input 
+                        type="number" 
+                        value={config.operations.initial_bit_depth} 
+                        onChange={e => updateOperations('initial_bit_depth', safeParseFloat(e.target.value))} 
+                        className="w-full border border-slate-200 rounded p-1.5 text-sm focus:border-cyan-500 outline-none bg-slate-50 font-medium text-slate-700"
+                      />
+                   </div>
+                   <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase">Current Drilled Depth (m)</label>
+                      <input 
+                        type="number" 
+                        value={config.operations.initial_hole_depth} 
+                        onChange={e => updateOperations('initial_hole_depth', safeParseFloat(e.target.value))} 
+                        className="w-full border border-slate-200 rounded p-1.5 text-sm focus:border-cyan-500 outline-none bg-slate-50 font-medium text-slate-700"
+                      />
+                   </div>
                    <div className="space-y-1">
                       <label className="text-[10px] font-bold text-slate-500 uppercase">Target RPM</label>
                       <input 

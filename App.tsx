@@ -16,11 +16,11 @@ const App: React.FC = () => {
   const [telemetryData, setTelemetryData] = useState<TelemetryPoint[]>([]);
   const [currentPoint, setCurrentPoint] = useState<TelemetryPoint | undefined>(undefined);
   const [visualMode, setVisualMode] = useState<'3d' | '2d'>('3d');
+  const [isAiOpen, setIsAiOpen] = useState(true);
   
-  // Use a Ref for telemetry to pass to 3D view without causing re-renders of the 3D component
+  const simulatorRef = useRef<MockSimulator | null>(null);
   const telemetryRef = useRef<TelemetryPoint | undefined>(undefined);
 
-  // Calculate static depth (middle of well) for setup mode
   const maxWellDepth = useMemo(() => {
     if (config.wellPath.length === 0) return 0;
     return config.wellPath[config.wellPath.length - 1].md;
@@ -28,7 +28,11 @@ const App: React.FC = () => {
 
   const staticDepth = maxWellDepth * 0.5;
 
-  // Initialize simulator connection
+  const currentHoleDepth = Math.max(
+    config.operations.initial_hole_depth || 0,
+    currentPoint?.depth || 0
+  );
+
   useEffect(() => {
     let lastUpdate = 0;
 
@@ -49,14 +53,13 @@ const App: React.FC = () => {
       // Update Ref for 3D view (Immediate - for smooth 60fps animation)
       telemetryRef.current = telemetryPoint;
       
-      // Throttle State Update for UI (Charts/KPIs) to ~10fps to prevent React lag
       const now = Date.now();
       if (now - lastUpdate > 100) {
         lastUpdate = now;
         setCurrentPoint(telemetryPoint);
         setTelemetryData(prev => {
-          const newData = [...prev, telemetryPoint];
-          if (newData.length > 100) newData.shift(); // Keep buffer size manageable
+          const newData = [...prev, data];
+          if (newData.length > 100) newData.shift(); 
           return newData;
         });
       }
@@ -67,9 +70,9 @@ const App: React.FC = () => {
     return () => {
       solverService.disconnect();
     };
-  }, []); // Run once on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); 
 
-  // Update simulator params when config changes (if running)
   useEffect(() => {
     if (isRunning) {
       solverService.updateControl({
@@ -123,7 +126,6 @@ const App: React.FC = () => {
     }
   };
 
-  // Determine max depth for schematic
   const maxDepth = useMemo(() => Math.max(
     ...config.wellPath.map(p => p.md),
     ...config.sections.map(s => s.md_bottom)
@@ -144,7 +146,6 @@ const App: React.FC = () => {
            </div>
          </div>
 
-         {/* Global Controls */}
          <div className="flex items-center gap-4">
             <div className="flex items-center gap-2 px-4 py-2 bg-slate-800 rounded-lg border border-slate-700">
               <div className={`w-2 h-2 rounded-full ${isRunning ? 'bg-green-500 animate-pulse' : 'bg-slate-500'}`}></div>
@@ -169,7 +170,6 @@ const App: React.FC = () => {
         
         {/* LEFT PANEL: Work Area (Config or Charts) */}
         <div className="w-[55%] flex flex-col border-r border-slate-200 bg-slate-50 relative z-20">
-           {/* Panel Header */}
            <div className="h-12 border-b border-slate-200 bg-white flex items-center px-4 justify-between shrink-0">
               <h2 className="font-semibold text-slate-700 flex items-center gap-2 text-sm uppercase tracking-wide">
                 {isRunning ? (
@@ -180,11 +180,9 @@ const App: React.FC = () => {
               </h2>
            </div>
 
-           {/* Panel Content */}
            <div className="flex-1 overflow-hidden relative">
              {isRunning ? (
                <div className="h-full flex flex-col">
-                 {/* KPI Cards */}
                  <div className="p-4 grid grid-cols-3 gap-4 bg-slate-50 border-b border-slate-200">
                     <div className="bg-white p-4 rounded border border-slate-200 shadow-sm">
                        <div className="text-[10px] text-slate-500 font-bold uppercase mb-1">WOB</div>
@@ -214,10 +212,10 @@ const App: React.FC = () => {
         </div>
 
         {/* RIGHT PANEL: 3D & AI */}
-        <div className="w-[45%] flex flex-col bg-white">
+        <div className="w-[45%] flex flex-col bg-white border-l border-slate-200">
           
-          {/* Visualization (Upper Section) */}
-          <div className="h-[55%] relative border-b border-slate-200 flex flex-col">
+          {/* Visualization (Fills available space) */}
+          <div className="flex-1 relative overflow-hidden flex flex-col min-h-0">
              <div className="absolute top-4 left-4 z-10 flex items-center gap-1 bg-white/90 p-1 rounded-md border border-slate-200 shadow-sm">
                 <button 
                    onClick={() => setVisualMode('3d')}
@@ -239,6 +237,7 @@ const App: React.FC = () => {
                     config={config} 
                     telemetryRef={telemetryRef}
                     staticDepth={staticDepth}
+                    currentHoleDepth={currentHoleDepth}
                   />
                ) : (
                   <WellSchematic 
@@ -246,13 +245,14 @@ const App: React.FC = () => {
                     maxDepth={maxDepth} 
                     drillString={config.drillString}
                     rpm={currentPoint?.rpmBit}
+                    holeDepth={currentHoleDepth}
                   />
                )}
              </div>
           </div>
 
-          {/* AI Assistant (Lower Section) */}
-          <div className="h-[45%] flex flex-col">
+          {/* AI Assistant (Collapsible at bottom) */}
+          <div className={`transition-all duration-300 ease-in-out flex flex-col border-t border-slate-200 shadow-2xl z-30 ${isAiOpen ? 'h-[45%]' : 'h-14'}`}>
              <AiAssistant 
                 config={config} 
                 setConfig={setConfig} 
@@ -260,6 +260,8 @@ const App: React.FC = () => {
                 isRunning={isRunning}
                 onStartSim={startSimulation}
                 onStopSim={stopSimulation}
+                isOpen={isAiOpen}
+                onToggle={() => setIsAiOpen(!isAiOpen)}
              />
           </div>
 

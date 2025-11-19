@@ -1,7 +1,7 @@
 
 import { GoogleGenAI, FunctionDeclaration, Type } from "@google/genai";
 import { SimulationConfig, StringComponent, ComponentType, TelemetryPoint } from "../types";
-import { AVAILABLE_COMPONENTS } from "../constants";
+import { COMPONENT_CATALOG } from "../catalog";
 
 const updateDrillStringFunction: FunctionDeclaration = {
   name: 'updateDrillString',
@@ -39,6 +39,18 @@ export class DrillCopilot {
     this.ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   }
 
+  // Generates a summarized text of the catalog for the AI context
+  private getCatalogContext(): string {
+    let text = "AVAILABLE COMPONENT CATALOG (API 5D / RP 7G Standards):\n";
+    for (const [category, items] of Object.entries(COMPONENT_CATALOG)) {
+      text += `\n[${category.toUpperCase()}]\n`;
+      items.forEach(c => {
+        text += `  - Name: "${c.name}", OD: ${c.od}", ID: ${c.id_pipe}", Wt: ${c.weight}kg/m\n`;
+      });
+    }
+    return text;
+  }
+
   async sendMessage(
     message: string, 
     config: SimulationConfig, 
@@ -47,9 +59,7 @@ export class DrillCopilot {
   ): Promise<string> {
     
     // Build Catalog String for Context
-    const catalogStr = AVAILABLE_COMPONENTS.map(c => 
-      `- Name: "${c.name}", Type: ${c.type}, OD: ${c.od}", ID: ${c.id_pipe}", Length: ${c.length}m, Weight: ${c.weight}kg/m`
-    ).join('\n');
+    const catalogStr = this.getCatalogContext();
 
     // Construct Context
     const context = `
@@ -71,7 +81,6 @@ export class DrillCopilot {
     YOUR GOAL:
     Assist with BHA (Bottom Hole Assembly) design, drill string optimization, and drilling parameter analysis.
 
-    AVAILABLE COMPONENT CATALOG (Use these specs exactly):
     ${catalogStr}
 
     RULES FOR BHA DESIGN:
@@ -82,6 +91,7 @@ export class DrillCopilot {
     5. FIll the rest to surface with DRILL PIPE.
     6. CRITICAL: When the user asks for a design or optimization, you MUST use the 'updateDrillString' tool to apply it immediately. Do not just textually describe it.
     7. For 'Drill Pipe' and 'HWDP', use the 'count' property to define total length (e.g., count: 50). For BHA items (Bit, Stab, MWD), count is usually 1.
+    8. Prefer standard sizes from the catalog provided above.
 
     Be helpful, concise, and engineering-focused.
     `;

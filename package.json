@@ -21,8 +21,8 @@
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "recharts": "^3.4.1",
-    "three": "^0.181.2",
-    "ws": "^8.18.3"
+    "@google/genai": "^1.30.0",
+    "js-yaml": "^4.1.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
