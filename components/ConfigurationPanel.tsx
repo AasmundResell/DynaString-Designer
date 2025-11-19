@@ -20,9 +20,10 @@ const validateWellArchitecture = (sections: WellSection[]): string[] => {
       errors.push(`Section "${current.name}": Inner ID (${current.id_hole}") cannot be larger than or equal to OD (${current.od}").`);
     }
     if (i > 0) {
-      const parentSection = sorted.find(s => s.md_top <= current.md_top && s.md_bottom >= current.md_top && s.id !== current.id);
+      const parentSection = sorted[i-1];
       if (parentSection) {
-        if (current.od >= parentSection.id_hole) {
+        // Allow equal diameters (e.g. open hole drilled same size as previous ID)
+        if (current.od > parentSection.id_hole) {
            errors.push(`Clearance Issue: "${current.name}" (OD ${current.od}") will not fit inside "${parentSection.name}" (ID ${parentSection.id_hole}").`);
         }
       }
@@ -67,7 +68,42 @@ export const ConfigurationPanel: React.FC<Props> = ({ config, setConfig }) => {
 
   const updateSection = (index: number, field: keyof WellSection, value: any) => {
     const newSections = [...config.sections];
-    newSections[index] = { ...newSections[index], [field]: value };
+    const prevSection = index > 0 ? newSections[index - 1] : null;
+    
+    let updatedSection = { ...newSections[index], [field]: value };
+    const val = typeof value === 'number' ? value : parseFloat(value);
+
+    if (updatedSection.type === SectionType.OPEN_HOLE) {
+        // For Open Hole: OD and ID are the same (Hole Size)
+        if (field === 'od' || field === 'id_hole') {
+            updatedSection.od = val;
+            updatedSection.id_hole = val;
+            
+            // Auto-clamp to previous ID to ensure it fits
+            if (prevSection && val > prevSection.id_hole) {
+                updatedSection.od = prevSection.id_hole;
+                updatedSection.id_hole = prevSection.id_hole;
+            }
+        }
+    } else {
+        // Casing / Liner Logic
+        if (field === 'od') {
+            // Constraint: OD must be > ID
+            // If new OD is <= ID, automatically push ID down
+            if (val <= updatedSection.id_hole) {
+                updatedSection.id_hole = Number((val * 0.88).toFixed(3)); // Default 88% drift
+            }
+        }
+        if (field === 'id_hole') {
+            // Constraint: ID must be < OD
+            // If new ID is >= OD, automatically push OD up
+            if (val >= updatedSection.od) {
+                updatedSection.od = Number((val * 1.12).toFixed(3));
+            }
+        }
+    }
+
+    newSections[index] = updatedSection;
     setConfig({ ...config, sections: newSections });
   };
 
@@ -227,16 +263,64 @@ export const ConfigurationPanel: React.FC<Props> = ({ config, setConfig }) => {
             <div className="bg-white rounded-lg p-4 shadow-sm border border-slate-200">
                 <div className="flex justify-between items-center mb-4">
                   <h3 className="font-semibold text-slate-800">Well Sections</h3>
-                  <button onClick={addSection} className="px-2 py-1 bg-cyan-600 text-white text-xs rounded"><Plus size={14} /></button>
+                  <button onClick={addSection} className="px-2 py-1 bg-cyan-600 text-white text-xs rounded hover:bg-cyan-700 transition-colors"><Plus size={14} /></button>
                 </div>
-                <div className="space-y-2">
+                <div className="space-y-3">
                   {config.sections.map((sec, idx) => (
-                    <div key={sec.id} className="bg-slate-50 border border-slate-200 rounded p-2 text-xs grid grid-cols-2 gap-2">
-                       <input value={sec.name} onChange={e => updateSection(idx, 'name', e.target.value)} className="col-span-2 font-semibold bg-transparent border-none focus:ring-0 px-0" />
-                       <div><label className="text-[10px] text-slate-500">Top (m)</label><input type="number" value={sec.md_top} onChange={e => updateSection(idx, 'md_top', safeParseFloat(e.target.value))} className="w-full border rounded px-1" /></div>
-                       <div><label className="text-[10px] text-slate-500">Bottom (m)</label><input type="number" value={sec.md_bottom} onChange={e => updateSection(idx, 'md_bottom', safeParseFloat(e.target.value))} className="w-full border rounded px-1" /></div>
-                       <div><label className="text-[10px] text-slate-500">OD (in)</label><input type="number" value={sec.od} onChange={e => updateSection(idx, 'od', safeParseFloat(e.target.value))} className="w-full border rounded px-1 text-cyan-700" /></div>
-                       <div><label className="text-[10px] text-slate-500">ID (in)</label><input type="number" value={sec.id_hole} onChange={e => updateSection(idx, 'id_hole', safeParseFloat(e.target.value))} className="w-full border rounded px-1 text-emerald-700" /></div>
+                    <div key={sec.id} className="bg-slate-50 border border-slate-200 rounded-lg p-4">
+                       {/* Section Header */}
+                       <div className="flex justify-between items-start mb-4">
+                          <div className="flex-1 mr-4">
+                              <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Section Name</label>
+                              <input 
+                                value={sec.name} 
+                                onChange={e => updateSection(idx, 'name', e.target.value)} 
+                                className="w-full p-2 bg-white border border-slate-300 rounded text-sm font-semibold text-slate-700 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 outline-none" 
+                              />
+                          </div>
+                          {config.sections.length > 1 && (
+                             <button onClick={() => removeSection(idx)} className="mt-6 text-slate-400 hover:text-red-500 transition-colors p-1"><Trash2 size={16} /></button>
+                          )}
+                       </div>
+
+                       {/* Properties Grid */}
+                       <div className="grid grid-cols-12 gap-3">
+                           <div className="col-span-6 sm:col-span-3">
+                               <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Top (m)</label>
+                               <input type="number" value={sec.md_top} onChange={e => updateSection(idx, 'md_top', safeParseFloat(e.target.value))} className="w-full p-2 bg-white border border-slate-300 rounded text-sm text-slate-700" />
+                           </div>
+                           <div className="col-span-6 sm:col-span-3">
+                               <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Bottom (m)</label>
+                               <input type="number" value={sec.md_bottom} onChange={e => updateSection(idx, 'md_bottom', safeParseFloat(e.target.value))} className="w-full p-2 bg-white border border-slate-300 rounded text-sm text-slate-700" />
+                           </div>
+
+                           {sec.type === SectionType.OPEN_HOLE ? (
+                             <div className="col-span-12 sm:col-span-6">
+                                <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Hole Diameter (in)</label>
+                                <div className="relative">
+                                  <input 
+                                    type="number" 
+                                    value={sec.od} 
+                                    onChange={e => updateSection(idx, 'od', safeParseFloat(e.target.value))} 
+                                    className="w-full p-2 bg-white border border-slate-300 rounded text-sm font-mono text-slate-800 focus:border-cyan-500 outline-none" 
+                                  />
+                                  <span className="absolute right-3 top-2.5 text-xs text-slate-400 pointer-events-none">in</span>
+                                </div>
+                                <p className="text-[10px] text-slate-400 mt-1">Diameter automatically constrained to previous section ID.</p>
+                             </div>
+                           ) : (
+                             <>
+                                <div className="col-span-6 sm:col-span-3">
+                                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">OD (in)</label>
+                                    <input type="number" value={sec.od} onChange={e => updateSection(idx, 'od', safeParseFloat(e.target.value))} className="w-full p-2 bg-white border border-slate-300 rounded text-sm font-mono text-cyan-700 font-medium" />
+                                </div>
+                                <div className="col-span-6 sm:col-span-3">
+                                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">ID (in)</label>
+                                    <input type="number" value={sec.id_hole} onChange={e => updateSection(idx, 'id_hole', safeParseFloat(e.target.value))} className="w-full p-2 bg-white border border-slate-300 rounded text-sm font-mono text-emerald-700 font-medium" />
+                                </div>
+                             </>
+                           )}
+                       </div>
                     </div>
                   ))}
                 </div>
@@ -246,7 +330,7 @@ export const ConfigurationPanel: React.FC<Props> = ({ config, setConfig }) => {
             <div className="bg-white rounded-lg p-4 shadow-sm border border-slate-200">
                  <div className="flex justify-between items-center mb-4">
                   <h3 className="font-semibold text-slate-800">Trajectory</h3>
-                  <button onClick={addWellPoint} className="px-2 py-1 bg-cyan-600 text-white text-xs rounded"><Plus size={14} /></button>
+                  <button onClick={addWellPoint} className="px-2 py-1 bg-cyan-600 text-white text-xs rounded hover:bg-cyan-700"><Plus size={14} /></button>
                 </div>
                 <div className="bg-slate-50 rounded border border-slate-200 overflow-hidden">
                    <table className="w-full text-xs">

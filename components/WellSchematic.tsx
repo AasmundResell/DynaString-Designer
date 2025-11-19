@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { WellSection, SectionType, StringComponent, ComponentType } from '../types';
 
@@ -20,8 +21,8 @@ const WellSchematicComponent: React.FC<Props> = ({ sections, maxDepth, drillStri
   const scaleY = drawHeight / maxMD;
   
   // X Scale: Calculate based on largest OD in the entire system
-  const maxHoleOD = Math.max(...sections.map(s => s.od), 30); 
-  const maxStringOD = Math.max(...drillString.map(c => c.stabilizer?.bladeOd || c.od), 10);
+  const maxHoleOD = Math.max(...sections.map((s: WellSection) => s.od), 30); 
+  const maxStringOD = Math.max(...drillString.map((c: StringComponent) => c.stabilizer?.bladeOd || c.od), 10);
   const largestOD = Math.max(maxHoleOD, maxStringOD) * 1.2; 
   
   const scaleX = (width * 0.5) / largestOD; 
@@ -30,15 +31,15 @@ const WellSchematicComponent: React.FC<Props> = ({ sections, maxDepth, drillStri
   // Sort sections largest OD to smallest (Painter's algo for bodies)
   const sortedSections = [...sections].sort((a, b) => b.od - a.od);
 
-  const depthMarkers = Array.from(new Set(
+  const depthMarkers: number[] = Array.from<number>(new Set(
     sections.flatMap(s => [s.md_top, s.md_bottom])
   )).sort((a, b) => a - b);
   
-  const uniqueDepths = depthMarkers.filter(d => d <= maxMD);
+  const uniqueDepths = depthMarkers.filter((d: number) => d <= maxMD);
 
   // Drill String Positioning
   const wellTotalDepth = Math.max(...sections.map(s => s.md_bottom), 100);
-  const stringTotalLength = drillString.reduce((acc, c) => acc + (c.length * (c.count || 1)), 0);
+  const stringTotalLength = drillString.reduce((acc: number, c: StringComponent) => acc + (c.length * (c.count || 1)), 0);
   
   // If we are drilling (simulating), and the bit is deeper than hole, we clamp it. 
   // But usually in sim the hole gets deeper. For this view, we align bit to bottom or string length.
@@ -123,6 +124,9 @@ const WellSchematicComponent: React.FC<Props> = ({ sections, maxDepth, drillStri
            if (i === uniqueDepths.length - 1) return null;
            const startMd = depth;
            const endMd = uniqueDepths[i+1];
+           
+           if (typeof endMd !== 'number') return null;
+
            const midMd = (startMd + endMd) / 2;
            const activeSections = sections.filter(s => s.md_top <= midMd && s.md_bottom >= midMd);
            if (activeSections.length === 0) return null;

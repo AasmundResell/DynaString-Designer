@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { ViewMode, SimulationConfig, TelemetryPoint } from './types';
 import { DEFAULT_CONFIG } from './constants';
@@ -33,17 +34,22 @@ const App: React.FC = () => {
   useEffect(() => {
     simulatorRef.current = new MockSimulator(config.operations);
     
+    let lastUpdate = 0;
     const unsubscribe = simulatorRef.current.subscribe((data) => {
-      // Update Ref for 3D view (no render trigger)
+      // Update Ref for 3D view (Immediate - for smooth 60fps animation)
       telemetryRef.current = data;
       
-      // Update State for UI (KPIs + Charts) - This DOES trigger App render
-      setCurrentPoint(data);
-      setTelemetryData(prev => {
-        const newData = [...prev, data];
-        if (newData.length > 100) newData.shift(); // Keep buffer size manageable
-        return newData;
-      });
+      // Throttle State Update for UI (Charts/KPIs) to ~10fps to prevent React lag
+      const now = Date.now();
+      if (now - lastUpdate > 100) {
+        lastUpdate = now;
+        setCurrentPoint(data);
+        setTelemetryData(prev => {
+          const newData = [...prev, data];
+          if (newData.length > 100) newData.shift(); // Keep buffer size manageable
+          return newData;
+        });
+      }
     });
 
     return () => {
