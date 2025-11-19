@@ -1,0 +1,5 @@
+{
+  "name": "DrillSim Pro GUI",
+  "description": "A modern, minimalist frontend for C++ drill string simulation, featuring 3D visualization and real-time telemetry.",
+  "requestFramePermissions": []
+}
