@@ -1,3 +1,4 @@
+
 // Domain Types
 
 export enum ViewMode {
@@ -39,14 +40,22 @@ export enum ComponentType {
   BIT = 'bit'
 }
 
+export interface StabilizerParams {
+  bladeOd: number;
+  bladeLength: number;
+  distFromBottom: number;
+}
+
 export interface StringComponent {
   id: string; // internal UI id
   type: ComponentType;
   name: string;
-  od: number; // Outer Diameter (inch)
+  od: number; // Body Outer Diameter (inch)
   id_pipe: number; // Inner Diameter (inch)
-  length: number; // Length (m)
+  length: number; // Length (m) per item
   weight: number; // kg/m approx
+  count: number; // Number of items in this stack
+  stabilizer?: StabilizerParams; // Optional specific settings
 }
 
 export interface BitRockParams {
@@ -98,4 +107,13 @@ export interface TrajectoryPoint3D {
   y: number;
   z: number;
   md: number;
+}
+
+// --- AI Types ---
+
+export interface ChatMessage {
+  id: string;
+  role: 'user' | 'model' | 'system';
+  text: string;
+  isToolCall?: boolean;
 }

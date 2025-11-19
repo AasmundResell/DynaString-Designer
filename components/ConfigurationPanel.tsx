@@ -1,79 +1,51 @@
+
 import React, { useState, useMemo } from 'react';
 import { SimulationConfig, WellPoint, StringComponent, ComponentType, SectionType, WellSection } from '../types';
 import { AVAILABLE_COMPONENTS } from '../constants';
-import { Plus, Trash2, GripVertical, Activity, Settings, Map, ArrowDown, Layers } from 'lucide-react';
+import { Plus, Trash2, GripVertical, Activity, Map, ArrowDown, X, Info, AlertTriangle, Edit2, Hammer, Sliders, Zap } from 'lucide-react';
 
 interface Props {
   config: SimulationConfig;
   setConfig: React.Dispatch<React.SetStateAction<SimulationConfig>>;
 }
 
-// Simple 2D Schematic for Well Architecture
-const WellSchematic: React.FC<{ sections: WellSection[], maxDepth: number }> = ({ sections, maxDepth }) => {
-  // Constants for drawing
-  const width = 200;
-  const height = 400;
-  const scaleY = height / (maxDepth || 1000);
-  const centerX = width / 2;
-  const maxDiameter = Math.max(...sections.map(s => s.od), 24); // Normalize width
-  const scaleX = (width * 0.8) / maxDiameter;
+// Validation Function
+const validateWellArchitecture = (sections: WellSection[]): string[] => {
+  const errors: string[] = [];
+  const sorted = [...sections].sort((a, b) => a.md_bottom - b.md_bottom);
+  
+  for (let i = 0; i < sorted.length; i++) {
+    const current = sorted[i];
+    if (current.type !== SectionType.OPEN_HOLE && current.id_hole >= current.od) {
+      errors.push(`Section "${current.name}": Inner ID (${current.id_hole}") cannot be larger than or equal to OD (${current.od}").`);
+    }
+    if (i > 0) {
+      const parentSection = sorted.find(s => s.md_top <= current.md_top && s.md_bottom >= current.md_top && s.id !== current.id);
+      if (parentSection) {
+        if (current.od >= parentSection.id_hole) {
+           errors.push(`Clearance Issue: "${current.name}" (OD ${current.od}") will not fit inside "${parentSection.name}" (ID ${parentSection.id_hole}").`);
+        }
+      }
+    }
+  }
+  return errors;
+};
 
-  return (
-    <div className="h-full w-full flex flex-col items-center">
-       <div className="bg-white border border-slate-200 rounded shadow-sm p-4 h-[450px] w-[240px] overflow-hidden relative">
-         <div className="absolute top-2 right-2 text-[10px] text-slate-400 font-mono">MD: 0</div>
-         <div className="absolute bottom-2 right-2 text-[10px] text-slate-400 font-mono">MD: {maxDepth.toFixed(0)}</div>
-         
-         <svg width="100%" height="100%" viewBox={`0 0 ${width} ${height}`} className="mx-auto">
-            <defs>
-              <pattern id="hatch" patternUnits="userSpaceOnUse" width="4" height="4" patternTransform="rotate(45)">
-                <rect width="2" height="4" transform="translate(0,0)" fill="#cbd5e1" opacity="0.3" />
-              </pattern>
-            </defs>
-            {/* Sort sections by diameter descending (outer first) so they stack correctly visually if overlapping */}
-            {[...sections].sort((a,b) => b.od - a.od).map((section, idx) => {
-               const top = section.md_top * scaleY;
-               const h = (section.md_bottom - section.md_top) * scaleY;
-               const w = section.od * scaleX;
-               const x = centerX - (w / 2);
-               
-               return (
-                 <g key={section.id}>
-                   {/* Wall Left */}
-                   <rect x={x} y={top} width={2} height={h} fill="#475569" />
-                   {/* Wall Right */}
-                   <rect x={x + w} y={top} width={2} height={h} fill="#475569" />
-                   
-                   {/* Fill between based on type */}
-                   {section.type === SectionType.OPEN_HOLE ? (
-                      <rect x={x} y={top} width={w} height={h} fill="url(#hatch)" />
-                   ) : (
-                      <rect x={x} y={top} width={w} height={h} fill="#94a3b8" fillOpacity={0.2} />
-                   )}
-                   
-                   {/* Label if room */}
-                   {h > 20 && (
-                     <text x={centerX + w/2 + 5} y={top + h/2} fontSize="10" fill="#64748b" alignmentBaseline="middle">
-                       {section.type === SectionType.OPEN_HOLE ? 'OH' : 'Csg'} {section.od}"
-                     </text>
-                   )}
-                 </g>
-               )
-            })}
-            {/* Center line */}
-            <line x1={centerX} y1={0} x2={centerX} y2={height} stroke="#e2e8f0" strokeDasharray="4 4" />
-         </svg>
-       </div>
-       <p className="text-xs text-slate-500 mt-2 font-medium">Wellbore Schematic (Telescoping View)</p>
-    </div>
-  );
+const safeParseFloat = (val: string, fallback = 0): number => {
+  const num = parseFloat(val);
+  return isNaN(num) ? fallback : num;
 };
 
 export const ConfigurationPanel: React.FC<Props> = ({ config, setConfig }) => {
   const [activeTab, setActiveTab] = useState<'well' | 'string' | 'physics'>('well');
+  const [draggedItemIndex, setDraggedItemIndex] = useState<number | null>(null);
+  const [selectedComponentId, setSelectedComponentId] = useState<string | null>(null);
 
-  // --- Well Path Handlers ---
+  const validationErrors = useMemo(() => validateWellArchitecture(config.sections), [config.sections]);
+
+  // --- Well & Section Handlers ---
   const updateWellPoint = (index: number, field: keyof WellPoint, value: number) => {
+    if (isNaN(value)) return; 
     const newPath = [...config.wellPath];
     newPath[index] = { ...newPath[index], [field]: value };
     setConfig({ ...config, wellPath: newPath });
@@ -93,7 +65,6 @@ export const ConfigurationPanel: React.FC<Props> = ({ config, setConfig }) => {
     setConfig({ ...config, wellPath: newPath });
   };
 
-  // --- Section Handlers ---
   const updateSection = (index: number, field: keyof WellSection, value: any) => {
     const newSections = [...config.sections];
     newSections[index] = { ...newSections[index], [field]: value };
@@ -103,6 +74,9 @@ export const ConfigurationPanel: React.FC<Props> = ({ config, setConfig }) => {
   const addSection = () => {
     const last = config.sections[config.sections.length - 1];
     const newId = Math.random().toString(36).substr(2, 9);
+    const defaultOD = last ? last.id_hole * 0.9 : 9.625; 
+    const defaultID = defaultOD * 0.85; 
+
     setConfig({
       ...config,
       sections: [...config.sections, { 
@@ -111,8 +85,8 @@ export const ConfigurationPanel: React.FC<Props> = ({ config, setConfig }) => {
         type: SectionType.CASING, 
         md_top: last ? last.md_bottom : 0, 
         md_bottom: last ? last.md_bottom + 500 : 500,
-        od: last ? last.id_hole : 9.625,
-        id_hole: last ? last.id_hole - 1 : 8.5
+        od: parseFloat(defaultOD.toFixed(3)),
+        id_hole: parseFloat(defaultID.toFixed(3))
       }]
     });
   };
@@ -123,317 +97,518 @@ export const ConfigurationPanel: React.FC<Props> = ({ config, setConfig }) => {
     setConfig({ ...config, sections: newSections });
   };
 
-  // --- String Handlers ---
+  // --- Drill String Handlers ---
   const addComponent = (comp: StringComponent) => {
-    setConfig({ ...config, drillString: [...config.drillString, { ...comp, id: Math.random().toString() }] });
+    if (comp.type === ComponentType.BIT) {
+      if (config.drillString.some(c => c.type === ComponentType.BIT)) {
+         alert("The assembly already has a bit.");
+         return;
+      }
+      const newBit = { ...comp, id: Math.random().toString(), count: 1 };
+      setConfig({ ...config, drillString: [...config.drillString, newBit] });
+      setSelectedComponentId(newBit.id);
+      return;
+    }
+    const newComp = { ...comp, id: Math.random().toString(), count: 1 };
+    const hasBit = config.drillString.length > 0 && config.drillString[config.drillString.length - 1].type === ComponentType.BIT;
+    
+    let newString;
+    if (hasBit) {
+       const bit = config.drillString[config.drillString.length - 1];
+       const others = config.drillString.slice(0, -1);
+       newString = [...others, newComp, bit];
+    } else {
+       newString = [...config.drillString, newComp];
+    }
+    setConfig({ ...config, drillString: newString });
+    setSelectedComponentId(newComp.id);
   };
 
-  const removeComponent = (index: number) => {
+  const removeComponent = (e: React.MouseEvent, index: number) => {
+    e.stopPropagation();
+    const targetId = config.drillString[index].id;
     const newString = config.drillString.filter((_, i) => i !== index);
+    setConfig({ ...config, drillString: newString });
+    if (selectedComponentId === targetId) setSelectedComponentId(null);
+  };
+
+  const updateComponent = (id: string, field: keyof StringComponent, value: any) => {
+    const index = config.drillString.findIndex(c => c.id === id);
+    if (index === -1) return;
+    const newString = [...config.drillString];
+    newString[index] = { ...newString[index], [field]: value };
     setConfig({ ...config, drillString: newString });
   };
 
-  // Max depth for schematic
-  const maxDepth = useMemo(() => Math.max(
-      ...config.wellPath.map(p => p.md),
-      ...config.sections.map(s => s.md_bottom)
-  ), [config]);
+  const updateStabilizerParams = (id: string, field: string, value: number) => {
+    const index = config.drillString.findIndex(c => c.id === id);
+    if (index === -1) return;
+    const comp = config.drillString[index];
+    const newStab = { ...comp.stabilizer!, [field]: value };
+    const newString = [...config.drillString];
+    newString[index] = { ...comp, stabilizer: newStab };
+    setConfig({ ...config, drillString: newString });
+  };
+
+  // --- Physics Handlers ---
+  const updateOperations = (field: string, value: number) => {
+    setConfig({ ...config, operations: { ...config.operations, [field]: value }});
+  };
+
+  const updateContact = (field: string, value: number) => {
+    setConfig({ ...config, contact: { ...config.contact, [field]: value }});
+  };
+
+  const updateBitRock = (field: string, value: number) => {
+    setConfig({ ...config, bitRock: { ...config.bitRock, [field]: value }});
+  };
+
+  // Drag and Drop
+  const handleDragStart = (e: React.DragEvent, index: number) => {
+    if (config.drillString[index].type === ComponentType.BIT) {
+        e.preventDefault();
+        return;
+    }
+    setDraggedItemIndex(index);
+    e.dataTransfer.effectAllowed = "move";
+  };
+
+  const handleDragOver = (e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+  };
+
+  const handleDrop = (e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    if (draggedItemIndex === null || draggedItemIndex === index) return;
+    
+    const newString = [...config.drillString];
+    const [draggedItem] = newString.splice(draggedItemIndex, 1);
+    newString.splice(index, 0, draggedItem);
+    
+    const bitIndex = newString.findIndex(c => c.type === ComponentType.BIT);
+    if (bitIndex !== -1 && bitIndex !== newString.length - 1) {
+        const [bit] = newString.splice(bitIndex, 1);
+        newString.push(bit);
+    }
+
+    setConfig({ ...config, drillString: newString });
+    setDraggedItemIndex(null);
+  };
+
+  const selectedComponent = config.drillString.find(c => c.id === selectedComponentId);
 
   return (
     <div className="flex flex-col h-full bg-slate-50 text-slate-900">
-      {/* Tab Navigation */}
-      <div className="flex border-b border-slate-200 bg-white">
-        <button
-          onClick={() => setActiveTab('well')}
-          className={`flex items-center gap-2 px-6 py-4 text-sm font-medium transition-colors ${activeTab === 'well' ? 'bg-slate-50 text-cyan-600 border-b-2 border-cyan-600' : 'text-slate-500 hover:text-slate-800'}`}
-        >
-          <Map size={18} /> Well Architecture
+      <div className="flex border-b border-slate-200 bg-white overflow-x-auto scrollbar-hide shrink-0">
+        <button onClick={() => setActiveTab('well')} className={`flex items-center gap-2 px-6 py-4 text-sm font-medium transition-colors whitespace-nowrap ${activeTab === 'well' ? 'bg-slate-50 text-cyan-600 border-b-2 border-cyan-600' : 'text-slate-500 hover:text-slate-800'}`}>
+          <Map size={18} /> Well Arch
         </button>
-        <button
-          onClick={() => setActiveTab('string')}
-          className={`flex items-center gap-2 px-6 py-4 text-sm font-medium transition-colors ${activeTab === 'string' ? 'bg-slate-50 text-cyan-600 border-b-2 border-cyan-600' : 'text-slate-500 hover:text-slate-800'}`}
-        >
+        <button onClick={() => setActiveTab('string')} className={`flex items-center gap-2 px-6 py-4 text-sm font-medium transition-colors whitespace-nowrap ${activeTab === 'string' ? 'bg-slate-50 text-cyan-600 border-b-2 border-cyan-600' : 'text-slate-500 hover:text-slate-800'}`}>
           <ArrowDown size={18} /> Drill String
         </button>
-        <button
-          onClick={() => setActiveTab('physics')}
-          className={`flex items-center gap-2 px-6 py-4 text-sm font-medium transition-colors ${activeTab === 'physics' ? 'bg-slate-50 text-cyan-600 border-b-2 border-cyan-600' : 'text-slate-500 hover:text-slate-800'}`}
-        >
-          <Activity size={18} /> Physics & Control
+        <button onClick={() => setActiveTab('physics')} className={`flex items-center gap-2 px-6 py-4 text-sm font-medium transition-colors whitespace-nowrap ${activeTab === 'physics' ? 'bg-slate-50 text-cyan-600 border-b-2 border-cyan-600' : 'text-slate-500 hover:text-slate-800'}`}>
+          <Activity size={18} /> Physics
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-6">
+      <div className="flex-1 overflow-hidden p-4 flex flex-col">
         {/* WELL EDITOR */}
         {activeTab === 'well' && (
-          <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 max-w-7xl mx-auto">
-            
-            {/* Left Col: Trajectory */}
-            <div className="xl:col-span-1 space-y-6">
-               <div className="bg-white rounded-lg p-6 shadow-sm border border-slate-200">
-                <div className="flex justify-between items-center mb-4">
-                  <h3 className="text-lg font-semibold text-slate-800">Trajectory Points</h3>
-                  <button onClick={addWellPoint} className="flex items-center gap-2 px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold rounded transition-colors">
-                    <Plus size={14} /> ADD
-                  </button>
-                </div>
-                <div className="overflow-hidden rounded-md border border-slate-200">
-                  <table className="w-full text-sm text-left text-slate-600">
-                    <thead className="bg-slate-50 text-xs uppercase text-slate-500 border-b border-slate-200">
-                      <tr>
-                        <th className="px-3 py-2">MD</th>
-                        <th className="px-3 py-2">Inc</th>
-                        <th className="px-3 py-2">Azi</th>
-                        <th className="px-3 py-2 text-right"></th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {config.wellPath.map((pt, idx) => (
-                        <tr key={idx} className="hover:bg-slate-50">
-                          <td className="px-3 py-2">
-                            <input
-                              type="number"
-                              value={pt.md}
-                              onChange={(e) => updateWellPoint(idx, 'md', parseFloat(e.target.value))}
-                              className="bg-white border border-slate-200 rounded px-2 py-1 w-20 focus:border-cyan-500 focus:outline-none text-right"
-                            />
-                          </td>
-                          <td className="px-3 py-2">
-                            <input
-                              type="number"
-                              value={pt.inclination}
-                              onChange={(e) => updateWellPoint(idx, 'inclination', parseFloat(e.target.value))}
-                              className="bg-white border border-slate-200 rounded px-2 py-1 w-16 focus:border-cyan-500 focus:outline-none text-right"
-                            />
-                          </td>
-                          <td className="px-3 py-2">
-                            <input
-                              type="number"
-                              value={pt.azimuth}
-                              onChange={(e) => updateWellPoint(idx, 'azimuth', parseFloat(e.target.value))}
-                              className="bg-white border border-slate-200 rounded px-2 py-1 w-16 focus:border-cyan-500 focus:outline-none text-right"
-                            />
-                          </td>
-                          <td className="px-3 py-2 text-right">
-                            <button onClick={() => removeWellPoint(idx)} className="text-slate-400 hover:text-red-500 p-1">
-                              <Trash2 size={14} />
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+          <div className="overflow-y-auto h-full pr-2 space-y-6">
+             {validationErrors.length > 0 && (
+              <div className="bg-red-50 border border-red-200 rounded-md p-4">
+                <div className="flex items-center gap-2 text-red-700 font-semibold mb-2"><AlertTriangle size={18} /><span>Validation Issues</span></div>
+                <ul className="list-disc list-inside text-xs text-red-600">{validationErrors.map((err, i) => <li key={i}>{err}</li>)}</ul>
               </div>
-            </div>
-
-            {/* Middle Col: Sections Table */}
-            <div className="xl:col-span-1 space-y-6">
-               <div className="bg-white rounded-lg p-6 shadow-sm border border-slate-200">
+            )}
+            
+            {/* Well Sections */}
+            <div className="bg-white rounded-lg p-4 shadow-sm border border-slate-200">
                 <div className="flex justify-between items-center mb-4">
-                  <h3 className="text-lg font-semibold text-slate-800">Well Architecture</h3>
-                  <button onClick={addSection} className="flex items-center gap-2 px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold rounded transition-colors">
-                    <Plus size={14} /> ADD SECTION
-                  </button>
+                  <h3 className="font-semibold text-slate-800">Well Sections</h3>
+                  <button onClick={addSection} className="px-2 py-1 bg-cyan-600 text-white text-xs rounded"><Plus size={14} /></button>
                 </div>
-                <div className="space-y-3">
+                <div className="space-y-2">
                   {config.sections.map((sec, idx) => (
-                    <div key={sec.id} className="bg-slate-50 border border-slate-200 rounded p-3 space-y-2 text-sm">
-                       <div className="flex justify-between items-center">
-                          <input 
-                             value={sec.name} 
-                             onChange={e => updateSection(idx, 'name', e.target.value)}
-                             className="font-semibold bg-transparent border-b border-transparent hover:border-slate-300 focus:border-cyan-500 focus:outline-none text-slate-800 w-full"
-                          />
-                          <button onClick={() => removeSection(idx)} className="text-slate-400 hover:text-red-500 ml-2"><Trash2 size={14} /></button>
-                       </div>
-                       <div className="grid grid-cols-2 gap-2">
-                          <div>
-                             <label className="text-[10px] uppercase text-slate-500">Type</label>
-                             <select 
-                               value={sec.type}
-                               onChange={e => updateSection(idx, 'type', e.target.value)}
-                               className="w-full bg-white border border-slate-200 rounded px-2 py-1 text-xs"
-                             >
-                               <option value={SectionType.CASING}>Casing</option>
-                               <option value={SectionType.LINER}>Liner</option>
-                               <option value={SectionType.OPEN_HOLE}>Open Hole</option>
-                             </select>
-                          </div>
-                          <div>
-                             <label className="text-[10px] uppercase text-slate-500">OD (inch)</label>
-                             <input type="number" value={sec.od} onChange={e => updateSection(idx, 'od', parseFloat(e.target.value))} className="w-full bg-white border border-slate-200 rounded px-2 py-1" />
-                          </div>
-                          <div>
-                             <label className="text-[10px] uppercase text-slate-500">Top MD</label>
-                             <input type="number" value={sec.md_top} onChange={e => updateSection(idx, 'md_top', parseFloat(e.target.value))} className="w-full bg-white border border-slate-200 rounded px-2 py-1" />
-                          </div>
-                          <div>
-                             <label className="text-[10px] uppercase text-slate-500">Bottom MD</label>
-                             <input type="number" value={sec.md_bottom} onChange={e => updateSection(idx, 'md_bottom', parseFloat(e.target.value))} className="w-full bg-white border border-slate-200 rounded px-2 py-1" />
-                          </div>
-                       </div>
+                    <div key={sec.id} className="bg-slate-50 border border-slate-200 rounded p-2 text-xs grid grid-cols-2 gap-2">
+                       <input value={sec.name} onChange={e => updateSection(idx, 'name', e.target.value)} className="col-span-2 font-semibold bg-transparent border-none focus:ring-0 px-0" />
+                       <div><label className="text-[10px] text-slate-500">Top (m)</label><input type="number" value={sec.md_top} onChange={e => updateSection(idx, 'md_top', safeParseFloat(e.target.value))} className="w-full border rounded px-1" /></div>
+                       <div><label className="text-[10px] text-slate-500">Bottom (m)</label><input type="number" value={sec.md_bottom} onChange={e => updateSection(idx, 'md_bottom', safeParseFloat(e.target.value))} className="w-full border rounded px-1" /></div>
+                       <div><label className="text-[10px] text-slate-500">OD (in)</label><input type="number" value={sec.od} onChange={e => updateSection(idx, 'od', safeParseFloat(e.target.value))} className="w-full border rounded px-1 text-cyan-700" /></div>
+                       <div><label className="text-[10px] text-slate-500">ID (in)</label><input type="number" value={sec.id_hole} onChange={e => updateSection(idx, 'id_hole', safeParseFloat(e.target.value))} className="w-full border rounded px-1 text-emerald-700" /></div>
                     </div>
                   ))}
                 </div>
-               </div>
             </div>
 
-            {/* Right Col: Schematic */}
-            <div className="xl:col-span-1">
-               <WellSchematic sections={config.sections} maxDepth={maxDepth} />
+            {/* Trajectory */}
+            <div className="bg-white rounded-lg p-4 shadow-sm border border-slate-200">
+                 <div className="flex justify-between items-center mb-4">
+                  <h3 className="font-semibold text-slate-800">Trajectory</h3>
+                  <button onClick={addWellPoint} className="px-2 py-1 bg-cyan-600 text-white text-xs rounded"><Plus size={14} /></button>
+                </div>
+                <div className="bg-slate-50 rounded border border-slate-200 overflow-hidden">
+                   <table className="w-full text-xs">
+                      <thead className="bg-slate-100 text-slate-500 border-b border-slate-200">
+                         <tr>
+                            <th className="px-2 py-2 text-left font-medium">MD (m)</th>
+                            <th className="px-2 py-2 text-left font-medium">Inc (°)</th>
+                            <th className="px-2 py-2 text-left font-medium">Azi (°)</th>
+                            <th className="px-2 py-2 w-8"></th>
+                         </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200">
+                         {config.wellPath.map((pt, idx) => (
+                            <tr key={idx} className="group hover:bg-white transition-colors">
+                               <td className="p-1">
+                                  <input 
+                                     type="number" 
+                                     value={pt.md} 
+                                     onChange={e => updateWellPoint(idx, 'md', safeParseFloat(e.target.value))} 
+                                     className="w-full bg-transparent border border-transparent hover:border-slate-300 rounded px-1 focus:border-cyan-500 focus:ring-0"
+                                  />
+                               </td>
+                               <td className="p-1">
+                                  <input 
+                                     type="number" 
+                                     value={pt.inclination} 
+                                     onChange={e => updateWellPoint(idx, 'inclination', safeParseFloat(e.target.value))} 
+                                     className="w-full bg-transparent border border-transparent hover:border-slate-300 rounded px-1 focus:border-cyan-500 focus:ring-0"
+                                  />
+                               </td>
+                               <td className="p-1">
+                                  <input 
+                                     type="number" 
+                                     value={pt.azimuth} 
+                                     onChange={e => updateWellPoint(idx, 'azimuth', safeParseFloat(e.target.value))} 
+                                     className="w-full bg-transparent border border-transparent hover:border-slate-300 rounded px-1 focus:border-cyan-500 focus:ring-0"
+                                  />
+                               </td>
+                               <td className="p-1 text-center">
+                                  <button onClick={() => removeWellPoint(idx)} className="text-slate-300 hover:text-red-500 transition-colors"><Trash2 size={12} /></button>
+                               </td>
+                            </tr>
+                         ))}
+                      </tbody>
+                   </table>
+                </div>
             </div>
-
           </div>
         )}
 
         {/* STRING EDITOR */}
         {activeTab === 'string' && (
-          <div className="grid grid-cols-12 gap-6 h-full">
-            {/* Library */}
-            <div className="col-span-4 bg-white rounded-lg border border-slate-200 flex flex-col shadow-sm">
-              <div className="p-4 border-b border-slate-100">
-                <h3 className="font-semibold text-slate-800">Component Library</h3>
-              </div>
-              <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50">
-                {AVAILABLE_COMPONENTS.map((comp) => (
-                  <div key={comp.id} className="bg-white p-3 rounded border border-slate-200 hover:border-cyan-500 hover:shadow-md transition-all cursor-pointer group" onClick={() => addComponent(comp)}>
-                    <div className="flex justify-between items-center">
-                      <span className="font-medium text-slate-700">{comp.name}</span>
-                      <Plus size={16} className="text-cyan-600 opacity-0 group-hover:opacity-100" />
-                    </div>
-                    <div className="text-xs text-slate-500 mt-1 grid grid-cols-2 gap-2">
-                      <span>OD: {comp.od}"</span>
-                      <span>Len: {comp.length}m</span>
-                    </div>
+          <div className="flex flex-col h-full gap-4">
+            {/* Top Area: Component Selection & Assembly List */}
+            <div className="flex-1 flex gap-4 min-h-0">
+               {/* Library */}
+               <div className="w-1/3 flex flex-col bg-white rounded-lg border border-slate-200 shadow-sm">
+                 <div className="p-2 border-b border-slate-100 font-semibold text-xs text-slate-600 uppercase bg-slate-50 rounded-t-lg">Library</div>
+                 <div className="flex-1 overflow-y-auto p-2 space-y-2">
+                    {AVAILABLE_COMPONENTS.map((comp) => (
+                      <div key={comp.id} onClick={() => addComponent(comp)} className="bg-white p-2 rounded border border-slate-200 hover:border-cyan-500 cursor-pointer text-xs shadow-sm group">
+                         <div className="font-medium text-slate-700 group-hover:text-cyan-700">{comp.name}</div>
+                         <div className="text-[10px] text-slate-400">OD: {comp.od}"</div>
+                      </div>
+                    ))}
+                 </div>
+               </div>
+
+               {/* Current Assembly List */}
+               <div className="flex-1 flex flex-col bg-white rounded-lg border border-slate-200 shadow-sm">
+                  <div className="p-2 border-b border-slate-100 flex justify-between items-center bg-slate-50 rounded-t-lg">
+                    <span className="font-semibold text-xs text-slate-600 uppercase">Drill String Assembly</span>
+                    <span className="text-[10px] bg-slate-200 px-2 py-0.5 rounded text-slate-600">
+                       {config.drillString.length} items
+                    </span>
                   </div>
-                ))}
-              </div>
+                  <div className="flex-1 overflow-y-auto p-2 space-y-1 bg-slate-100/50">
+                    {config.drillString.map((comp, idx) => {
+                      const isSelected = selectedComponentId === comp.id;
+                      return (
+                        <div 
+                          key={comp.id}
+                          onClick={() => setSelectedComponentId(comp.id)}
+                          draggable={comp.type !== ComponentType.BIT}
+                          onDragStart={(e) => handleDragStart(e, idx)}
+                          onDragOver={(e) => handleDragOver(e, idx)}
+                          onDrop={(e) => handleDrop(e, idx)}
+                          className={`flex items-center gap-2 p-2 rounded border text-xs cursor-pointer transition-all ${
+                            isSelected 
+                              ? 'bg-cyan-50 border-cyan-500 ring-1 ring-cyan-500 z-10' 
+                              : 'bg-white border-slate-200 hover:border-cyan-300'
+                          } ${draggedItemIndex === idx ? 'opacity-50' : ''}`}
+                        >
+                          <div className="text-slate-400 cursor-grab"><GripVertical size={12} /></div>
+                          <div className="font-mono text-slate-400 w-4 text-center">{idx + 1}</div>
+                          <div className="flex-1 font-medium text-slate-700">{comp.name}</div>
+                          <div className="text-slate-500">{comp.od}" OD</div>
+                          <div className="bg-slate-100 px-1.5 py-0.5 rounded text-[10px] font-mono font-bold text-slate-600">x{comp.count}</div>
+                          <button onClick={(e) => removeComponent(e, idx)} className="text-slate-300 hover:text-red-500"><X size={14} /></button>
+                        </div>
+                      );
+                    })}
+                  </div>
+               </div>
             </div>
 
-            {/* Assembly */}
-            <div className="col-span-8 bg-white rounded-lg border border-slate-200 flex flex-col shadow-sm">
-              <div className="p-4 border-b border-slate-100 flex justify-between items-center">
-                <h3 className="font-semibold text-slate-800">Current Assembly (Top to Bottom)</h3>
-                <span className="text-xs text-slate-500 bg-slate-100 px-2 py-1 rounded">Total Length: {config.drillString.reduce((acc, c) => acc + c.length, 0).toFixed(2)} m</span>
+            {/* Bottom Area: Property Inspector */}
+            <div className="h-[200px] bg-white rounded-lg border border-slate-200 shadow-sm flex flex-col shrink-0">
+              <div className="p-2 border-b border-slate-100 bg-slate-50 rounded-t-lg flex items-center gap-2">
+                 <Edit2 size={12} className="text-cyan-600" />
+                 <span className="font-semibold text-xs text-slate-600 uppercase">Component Properties</span>
               </div>
-              <div className="flex-1 overflow-y-auto p-4 space-y-2 bg-slate-50/50">
-                {config.drillString.length === 0 && (
-                  <div className="h-full flex items-center justify-center text-slate-400 italic">
-                    String is empty. Add components from the library.
-                  </div>
-                )}
-                {config.drillString.map((comp, idx) => (
-                  <div key={idx} className="flex items-center gap-4 bg-white p-3 rounded border border-slate-200 shadow-sm">
-                    <div className="text-slate-400 text-xs font-mono w-6">#{idx + 1}</div>
-                    <div className="flex-1">
-                      <div className="font-medium text-slate-800">{comp.name}</div>
-                      <div className="text-xs text-slate-500">
-                         Type: <span className="capitalize">{comp.type.replace('_', ' ')}</span> | OD: {comp.od}" | ID: {comp.id_pipe}" | {comp.length}m
+              
+              {selectedComponent ? (
+                <div className="p-4 overflow-y-auto grid grid-cols-4 gap-4 content-start">
+                   <div className="col-span-4 mb-2 pb-2 border-b border-slate-100 flex justify-between items-center">
+                      <input 
+                        type="text" 
+                        value={selectedComponent.name} 
+                        onChange={(e) => updateComponent(selectedComponent.id, 'name', e.target.value)}
+                        className="font-bold text-lg text-slate-800 bg-transparent border-none focus:ring-0 p-0 w-full"
+                      />
+                      <span className="text-xs px-2 py-1 bg-slate-100 rounded text-slate-500 uppercase">{selectedComponent.type.replace('_', ' ')}</span>
+                   </div>
+
+                   <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase">Quantity</label>
+                      <input 
+                        type="number" 
+                        min="1" 
+                        value={selectedComponent.count} 
+                        onChange={(e) => updateComponent(selectedComponent.id, 'count', safeParseFloat(e.target.value))}
+                        className="w-full border border-slate-200 rounded p-1.5 text-sm bg-slate-50 focus:border-cyan-500 outline-none transition-colors"
+                        disabled={[ComponentType.BIT, ComponentType.JAR, ComponentType.SUB].includes(selectedComponent.type)}
+                      />
+                   </div>
+
+                   <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase">Length (m)</label>
+                      <input 
+                        type="number" 
+                        value={selectedComponent.length} 
+                        onChange={(e) => updateComponent(selectedComponent.id, 'length', safeParseFloat(e.target.value))}
+                        className="w-full border border-slate-200 rounded p-1.5 text-sm focus:border-cyan-500 outline-none"
+                      />
+                   </div>
+
+                   <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase">Body OD (in)</label>
+                      <input 
+                        type="number" 
+                        value={selectedComponent.od} 
+                        onChange={(e) => updateComponent(selectedComponent.id, 'od', safeParseFloat(e.target.value))}
+                        className="w-full border border-slate-200 rounded p-1.5 text-sm focus:border-cyan-500 outline-none text-cyan-700 font-semibold"
+                      />
+                   </div>
+
+                   <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase">Pipe ID (in)</label>
+                      <input 
+                        type="number" 
+                        value={selectedComponent.id_pipe} 
+                        onChange={(e) => updateComponent(selectedComponent.id, 'id_pipe', safeParseFloat(e.target.value))}
+                        className="w-full border border-slate-200 rounded p-1.5 text-sm focus:border-cyan-500 outline-none text-emerald-700 font-semibold"
+                      />
+                   </div>
+
+                   {selectedComponent.type === ComponentType.STABILIZER && selectedComponent.stabilizer && (
+                      <div className="col-span-4 mt-2 bg-slate-50 p-3 rounded border border-slate-200 grid grid-cols-3 gap-4 relative">
+                         <div className="absolute -top-2 left-2 bg-slate-50 px-1 text-[10px] text-slate-500 font-bold">STABILIZER BLADE CONFIG</div>
+                         <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-slate-500">Blade OD (in)</label>
+                            <input 
+                              type="number" 
+                              value={selectedComponent.stabilizer.bladeOd} 
+                              onChange={(e) => updateStabilizerParams(selectedComponent.id, 'bladeOd', safeParseFloat(e.target.value))}
+                              className="w-full bg-white border border-slate-200 rounded p-1 text-xs"
+                            />
+                         </div>
+                         <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-slate-500">Blade Length (m)</label>
+                            <input 
+                              type="number" 
+                              value={selectedComponent.stabilizer.bladeLength} 
+                              onChange={(e) => updateStabilizerParams(selectedComponent.id, 'bladeLength', safeParseFloat(e.target.value))}
+                              className="w-full bg-white border border-slate-200 rounded p-1 text-xs"
+                            />
+                         </div>
+                         <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-slate-500">Dist from Bottom (m)</label>
+                            <input 
+                              type="number" 
+                              value={selectedComponent.stabilizer.distFromBottom} 
+                              onChange={(e) => updateStabilizerParams(selectedComponent.id, 'distFromBottom', safeParseFloat(e.target.value))}
+                              className="w-full bg-white border border-slate-200 rounded p-1 text-xs"
+                            />
+                         </div>
                       </div>
-                    </div>
-                    <button onClick={() => removeComponent(idx)} className="text-slate-400 hover:text-red-500 transition-colors">
-                      <Trash2 size={16} />
-                    </button>
-                  </div>
-                ))}
-              </div>
+                   )}
+                </div>
+              ) : (
+                <div className="flex-1 flex flex-col items-center justify-center text-slate-400 p-4">
+                   <Info size={24} className="mb-2 opacity-50" />
+                   <p className="text-xs">Select a component from the list above to edit properties.</p>
+                </div>
+              )}
             </div>
+
           </div>
         )}
 
         {/* PHYSICS EDITOR */}
         {activeTab === 'physics' && (
-          <div className="grid grid-cols-2 gap-6 max-w-5xl mx-auto">
-            <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm">
-              <div className="flex items-center gap-2 mb-6 text-cyan-600">
-                <Settings size={20} />
-                <h3 className="font-semibold text-slate-900">Operational Setpoints</h3>
-              </div>
-              <div className="space-y-4">
-                <div className="grid grid-cols-2 items-center gap-4">
-                  <label className="text-sm text-slate-600">Target RPM (Surface)</label>
-                  <input
-                    type="number"
-                    value={config.operations.rpm_target}
-                    onChange={e => setConfig({...config, operations: {...config.operations, rpm_target: parseFloat(e.target.value)}})}
-                    className="bg-slate-50 border border-slate-200 rounded px-3 py-2 text-right focus:border-cyan-500 focus:outline-none"
-                  />
+           <div className="overflow-y-auto h-full space-y-4 p-1">
+              
+              {/* Operational Parameters */}
+              <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm">
+                <div className="flex items-center gap-2 mb-4 border-b border-slate-100 pb-2">
+                   <Sliders size={16} className="text-cyan-600"/>
+                   <h3 className="font-bold text-slate-700 text-sm uppercase">Operational Parameters</h3>
                 </div>
-                <div className="grid grid-cols-2 items-center gap-4">
-                  <label className="text-sm text-slate-600">Target WOB (kN)</label>
-                  <input
-                    type="number"
-                    value={config.operations.wob_target}
-                    onChange={e => setConfig({...config, operations: {...config.operations, wob_target: parseFloat(e.target.value)}})}
-                    className="bg-slate-50 border border-slate-200 rounded px-3 py-2 text-right focus:border-cyan-500 focus:outline-none"
-                  />
-                </div>
-                <div className="grid grid-cols-2 items-center gap-4">
-                  <label className="text-sm text-slate-600">Target ROP (m/hr)</label>
-                  <input
-                    type="number"
-                    value={config.operations.rop_target}
-                    onChange={e => setConfig({...config, operations: {...config.operations, rop_target: parseFloat(e.target.value)}})}
-                    className="bg-slate-50 border border-slate-200 rounded px-3 py-2 text-right focus:border-cyan-500 focus:outline-none"
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-6">
-              <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm">
-                <h3 className="font-semibold text-slate-900 mb-4">Bit-Rock Interaction</h3>
-                <div className="space-y-3">
-                   <div className="flex justify-between items-center text-sm">
-                     <span className="text-slate-500">Rock Strength (UCS)</span>
-                     <span className="text-slate-900">{(config.bitRock.sigma / 1e6).toFixed(0)} MPa</span>
-                   </div>
-                   <input 
-                      type="range" min="10" max="200" 
-                      value={config.bitRock.sigma / 1e6} 
-                      onChange={e => setConfig({...config, bitRock: {...config.bitRock, sigma: parseFloat(e.target.value) * 1e6}})}
-                      className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-cyan-600"
-                   />
-                   
-                   <div className="flex justify-between items-center text-sm mt-4">
-                     <span className="text-slate-500">Intrinsic Specific Energy</span>
-                     <span className="text-slate-900">{(config.bitRock.epsilon / 1e6).toFixed(0)} MPa</span>
-                   </div>
-                   <input 
-                      type="range" min="10" max="200" 
-                      value={config.bitRock.epsilon / 1e6} 
-                      onChange={e => setConfig({...config, bitRock: {...config.bitRock, epsilon: parseFloat(e.target.value) * 1e6}})}
-                      className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-cyan-600"
-                   />
-                </div>
-              </div>
-
-              <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm">
-                <h3 className="font-semibold text-slate-900 mb-4">Borehole Friction</h3>
                 <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs text-slate-500 mb-1">Static Coeff</label>
-                    <input
-                      type="number" step="0.01"
-                      value={config.contact.mu_static}
-                      onChange={e => setConfig({...config, contact: {...config.contact, mu_static: parseFloat(e.target.value)}})}
-                      className="w-full bg-slate-50 border border-slate-200 rounded px-2 py-1 text-sm focus:border-cyan-500 focus:outline-none"
-                    />
+                   <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase">Target RPM</label>
+                      <input 
+                        type="number" 
+                        value={config.operations.rpm_target} 
+                        onChange={e => updateOperations('rpm_target', safeParseFloat(e.target.value))} 
+                        className="w-full border border-slate-200 rounded p-1.5 text-sm focus:border-cyan-500 outline-none"
+                      />
+                   </div>
+                   <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase">Target WOB (kN)</label>
+                      <input 
+                        type="number" 
+                        value={config.operations.wob_target} 
+                        onChange={e => updateOperations('wob_target', safeParseFloat(e.target.value))} 
+                        className="w-full border border-slate-200 rounded p-1.5 text-sm focus:border-cyan-500 outline-none"
+                      />
+                   </div>
+                   <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase">Top Feed Rate / ROP (m/hr)</label>
+                      <input 
+                        type="number" 
+                        value={config.operations.rop_target} 
+                        onChange={e => updateOperations('rop_target', safeParseFloat(e.target.value))} 
+                        className="w-full border border-slate-200 rounded p-1.5 text-sm focus:border-cyan-500 outline-none"
+                      />
+                   </div>
+                   <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase">Flow Rate (L/min)</label>
+                      <input 
+                        type="number" 
+                        value={config.operations.flow_rate} 
+                        onChange={e => updateOperations('flow_rate', safeParseFloat(e.target.value))} 
+                        className="w-full border border-slate-200 rounded p-1.5 text-sm focus:border-cyan-500 outline-none"
+                      />
+                   </div>
+                </div>
+              </div>
+
+              {/* Contact Physics */}
+              <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm">
+                <div className="flex items-center gap-2 mb-4 border-b border-slate-100 pb-2">
+                   <Activity size={16} className="text-orange-500"/>
+                   <h3 className="font-bold text-slate-700 text-sm uppercase">Wellbore Friction</h3>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase">Static Friction (μ)</label>
+                      <input 
+                        type="number" 
+                        step="0.01"
+                        value={config.contact.mu_static} 
+                        onChange={e => updateContact('mu_static', safeParseFloat(e.target.value))} 
+                        className="w-full border border-slate-200 rounded p-1.5 text-sm focus:border-cyan-500 outline-none"
+                      />
                   </div>
-                  <div>
-                    <label className="block text-xs text-slate-500 mb-1">Kinetic Coeff</label>
-                    <input
-                      type="number" step="0.01"
-                      value={config.contact.mu_kinetic}
-                      onChange={e => setConfig({...config, contact: {...config.contact, mu_kinetic: parseFloat(e.target.value)}})}
-                      className="w-full bg-slate-50 border border-slate-200 rounded px-2 py-1 text-sm focus:border-cyan-500 focus:outline-none"
-                    />
+                  <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase">Kinetic Friction (μ)</label>
+                      <input 
+                        type="number" 
+                        step="0.01"
+                        value={config.contact.mu_kinetic} 
+                        onChange={e => updateContact('mu_kinetic', safeParseFloat(e.target.value))} 
+                        className="w-full border border-slate-200 rounded p-1.5 text-sm focus:border-cyan-500 outline-none"
+                      />
+                  </div>
+                  <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase">Stribeck Velocity (m/s)</label>
+                      <input 
+                        type="number" 
+                        step="0.01"
+                        value={config.contact.stribeck_velocity} 
+                        onChange={e => updateContact('stribeck_velocity', safeParseFloat(e.target.value))} 
+                        className="w-full border border-slate-200 rounded p-1.5 text-sm focus:border-cyan-500 outline-none"
+                      />
                   </div>
                 </div>
               </div>
-            </div>
-          </div>
+
+              {/* Bit / Rock Mechanics */}
+              <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm">
+                <div className="flex items-center gap-2 mb-4 border-b border-slate-100 pb-2">
+                   <Hammer size={16} className="text-purple-600"/>
+                   <h3 className="font-bold text-slate-700 text-sm uppercase">Bit / Rock Mechanics</h3>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase">Rock Strength (Pa)</label>
+                      <input 
+                        type="number" 
+                        value={config.bitRock.sigma} 
+                        onChange={e => updateBitRock('sigma', safeParseFloat(e.target.value))} 
+                        className="w-full border border-slate-200 rounded p-1.5 text-sm focus:border-cyan-500 outline-none"
+                      />
+                      <div className="text-[10px] text-slate-400 text-right">{(config.bitRock.sigma / 1e6).toFixed(1)} MPa</div>
+                  </div>
+                  <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase">Specific Energy (Pa)</label>
+                      <input 
+                        type="number" 
+                        value={config.bitRock.epsilon} 
+                        onChange={e => updateBitRock('epsilon', safeParseFloat(e.target.value))} 
+                        className="w-full border border-slate-200 rounded p-1.5 text-sm focus:border-cyan-500 outline-none"
+                      />
+                       <div className="text-[10px] text-slate-400 text-right">{(config.bitRock.epsilon / 1e6).toFixed(1)} MPa</div>
+                  </div>
+                  <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase">Bit Friction (μ)</label>
+                      <input 
+                        type="number" 
+                        step="0.01"
+                        value={config.bitRock.mu} 
+                        onChange={e => updateBitRock('mu', safeParseFloat(e.target.value))} 
+                        className="w-full border border-slate-200 rounded p-1.5 text-sm focus:border-cyan-500 outline-none"
+                      />
+                  </div>
+                  <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase">Bit Gamma</label>
+                      <input 
+                        type="number" 
+                        step="0.1"
+                        value={config.bitRock.gamma} 
+                        onChange={e => updateBitRock('gamma', safeParseFloat(e.target.value))} 
+                        className="w-full border border-slate-200 rounded p-1.5 text-sm focus:border-cyan-500 outline-none"
+                      />
+                  </div>
+                   <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase">Blade Count</label>
+                      <input 
+                        type="number" 
+                        step="1"
+                        value={config.bitRock.n_blades} 
+                        onChange={e => updateBitRock('n_blades', safeParseFloat(e.target.value))} 
+                        className="w-full border border-slate-200 rounded p-1.5 text-sm focus:border-cyan-500 outline-none"
+                      />
+                  </div>
+                </div>
+              </div>
+
+           </div>
         )}
       </div>
     </div>

@@ -1,3 +1,4 @@
+
 import { ComponentType, SectionType, SimulationConfig, StringComponent, WellPoint, WellSection } from "./types";
 
 export const INITIAL_WELL_PATH: WellPoint[] = [
@@ -16,26 +17,34 @@ export const INITIAL_SECTIONS: WellSection[] = [
 ];
 
 export const AVAILABLE_COMPONENTS: StringComponent[] = [
-  { id: 'dp-1', type: ComponentType.DRILL_PIPE, name: "5 7/8'' Drill Pipe", od: 5.875, id_pipe: 5.156, length: 10, weight: 30 },
-  { id: 'hwdp-1', type: ComponentType.HWDP, name: "5 7/8'' HWDP", od: 5.875, id_pipe: 4.0, length: 9.5, weight: 60 },
-  { id: 'dc-1', type: ComponentType.DRILL_COLLAR, name: "8 1/4'' Drill Collar", od: 8.25, id_pipe: 3.25, length: 9.1, weight: 150 },
-  { id: 'stab-1', type: ComponentType.STABILIZER, name: "8 1/4'' Stabilizer", od: 12.25, id_pipe: 3.25, length: 2.0, weight: 180 },
-  { id: 'mwd-1', type: ComponentType.SUB, name: "MWD Tool", od: 8.0, id_pipe: 5.25, length: 6.0, weight: 120 },
-  { id: 'bit-1', type: ComponentType.BIT, name: "PDC Bit 12 1/4''", od: 12.25, id_pipe: 0, length: 0.3, weight: 50 },
+  { id: 'dp-1', type: ComponentType.DRILL_PIPE, name: "5 7/8'' Drill Pipe", od: 5.875, id_pipe: 5.156, length: 10, weight: 30, count: 1 },
+  { id: 'hwdp-1', type: ComponentType.HWDP, name: "5 7/8'' HWDP", od: 5.875, id_pipe: 4.0, length: 9.5, weight: 60, count: 1 },
+  { id: 'dc-1', type: ComponentType.DRILL_COLLAR, name: "8 1/4'' Drill Collar", od: 8.25, id_pipe: 3.0, length: 9.1, weight: 150, count: 1 },
+  { 
+    id: 'stab-1', 
+    type: ComponentType.STABILIZER, 
+    name: "8 1/4'' Stabilizer", 
+    od: 8.25, 
+    id_pipe: 3.0, 
+    length: 2.0, 
+    weight: 180, 
+    count: 1,
+    stabilizer: { bladeOd: 12.25, bladeLength: 0.8, distFromBottom: 0.6 }
+  },
+  { id: 'mwd-1', type: ComponentType.SUB, name: "MWD Tool", od: 8.0, id_pipe: 4.0, length: 8.0, weight: 120, count: 1 },
+  { id: 'bit-1', type: ComponentType.BIT, name: "PDC Bit 12 1/4''", od: 12.25, id_pipe: 2.0, length: 0.4, weight: 50, count: 1 },
 ];
 
 export const DEFAULT_CONFIG: SimulationConfig = {
   wellPath: INITIAL_WELL_PATH,
   sections: INITIAL_SECTIONS,
   drillString: [
-    AVAILABLE_COMPONENTS[0], // DP
-    AVAILABLE_COMPONENTS[0], // DP
-    AVAILABLE_COMPONENTS[0], // DP
-    AVAILABLE_COMPONENTS[1], // HWDP
-    AVAILABLE_COMPONENTS[2], // DC
-    AVAILABLE_COMPONENTS[4], // MWD
-    AVAILABLE_COMPONENTS[3], // Stab
-    AVAILABLE_COMPONENTS[5], // Bit
+    { ...AVAILABLE_COMPONENTS[0], count: 30 }, // 30 Drill Pipes
+    { ...AVAILABLE_COMPONENTS[1], count: 12 }, // 12 HWDP
+    { ...AVAILABLE_COMPONENTS[2], count: 6 },  // 6 Drill Collars
+    { ...AVAILABLE_COMPONENTS[4], count: 1 },  // MWD
+    { ...AVAILABLE_COMPONENTS[3], count: 1 },  // Stab
+    { ...AVAILABLE_COMPONENTS[5], count: 1 },  // Bit
   ],
   bitRock: {
     mu: 0.6,
