@@ -399,12 +399,12 @@ const AnnotatedAxes: React.FC<{ config: SimulationConfig }> = React.memo(({ conf
   return (
      <group>
         {/* Central TVD Axis Line */}
-        <Line points={[[0, 0, 0], [0, floorY, 0]]} color="#94a3b8" lineWidth={1} dashed dashScale={10} gapSize={5} />
+        <Line points={[[0, 0, 0], [0, floorY, 0]]} color="#64748b" lineWidth={2} />
 
         {/* TVD Markers */}
         {depthTicks.map(d => (
             <group key={d} position={[0, -d, 0]}>
-                <Line points={[[-20, 0, 0], [20, 0, 0]]} color="#64748b" lineWidth={1} />
+                <Line points={[[-20, 0, 0], [20, 0, 0]]} color="#64748b" lineWidth={2} />
                 <AxisLabel position={[60, 0, 0]} text={`${d}m`} color="#334155" fontSize={60} />
             </group>
         ))}
@@ -414,7 +414,7 @@ const AnnotatedAxes: React.FC<{ config: SimulationConfig }> = React.memo(({ conf
             {/* Matte Floor Plane - Made Whiter */}
             <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.5, 0]} receiveShadow>
                 <planeGeometry args={[size, size]} />
-                <meshStandardMaterial color="#ffffff" roughness={0.9} metalness={0.0} />
+                <meshStandardMaterial color="#ffffff" roughness={0.9} metalness={0.0} emissive="#ffffff" emissiveIntensity={0.2} />
             </mesh>
 
             {/* High Contrast Grid */}
@@ -424,16 +424,17 @@ const AnnotatedAxes: React.FC<{ config: SimulationConfig }> = React.memo(({ conf
                 cellSize={100} 
                 sectionSize={500} 
                 fadeDistance={size * 0.9} 
-                sectionColor="#94a3b8" 
-                cellColor="#cbd5e1"
+                sectionColor="#1e293b" 
+                cellColor="#64748b"
                 infiniteGrid={false}
             />
             
+            
             {/* Axes for Orientation - Neutral Colors */}
             {/* North (Z-) Axis */}
-            <Line points={[[0, 0, 0], [0, 0, -limit]]} color="#64748b" lineWidth={3} />
+            <Line points={[[0, 0, limit], [0, 0, -limit]]} color="#64748b" lineWidth={3} />
             {/* East (X+) Axis */}
-            <Line points={[[0, 0, 0], [limit, 0, 0]]} color="#64748b" lineWidth={3} />
+            <Line points={[[-limit, 0, 0], [limit, 0, 0]]} color="#64748b" lineWidth={3} />
             
             {/* Cardinal Labels */}
             <AxisLabel position={[0, 20, -limit]} text="North" color="#1e293b" fontSize={60} anchorY="bottom" />

@@ -3,6 +3,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { ViewMode, SimulationConfig, TelemetryPoint, SolverFrameData } from './types';
 import { DEFAULT_CONFIG } from './constants';
 import { solverService } from './services/solverApi';
+import { MockSimulator } from './services/simulator';
 import { ConfigurationPanel } from './components/ConfigurationPanel';
 import { Visualization3D } from './components/Visualization3D';
 import { WellSchematic } from './components/WellSchematic';
@@ -58,7 +59,7 @@ const App: React.FC = () => {
         lastUpdate = now;
         setCurrentPoint(telemetryPoint);
         setTelemetryData(prev => {
-          const newData = [...prev, data];
+          const newData = [...prev, telemetryPoint];
           if (newData.length > 100) newData.shift(); 
           return newData;
         });
