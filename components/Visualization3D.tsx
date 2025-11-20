@@ -3,7 +3,9 @@ import React, { useMemo, useRef, useEffect } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, PerspectiveCamera, Grid, Text, Line, Billboard } from '@react-three/drei';
 import * as THREE from 'three';
-import { SimulationConfig, WellPoint, TelemetryPoint, StringComponent, ComponentType } from '../types';
+import { SimulationConfig, WellPoint, TelemetryPoint, StringComponent, ComponentType, SolverFrameData } from '../types';
+import { HoleRenderer } from './3d/renderers/HoleRenderer';
+import { PipeRenderComponents } from './3d/renderers/PipeRenderer';
 
 // Fix for missing R3F types in JSX.IntrinsicElements.
 declare global {
@@ -28,305 +30,248 @@ declare global {
   }
 }
 
-// --- Colors matching Engineering/C++ Style ---
-const COLORS = {
-  PIPE_BODY: new THREE.Color("#94a3b8"),     // Silver/Grey
-  TOOL_JOINT: new THREE.Color("#475569"),    // Darker Grey
-  STABILIZER_BLADE: new THREE.Color("#0f172a"), // Almost Black/Dark Blue
-  BIT: new THREE.Color("#d97706"),           // Gold/Bronze
-  COLLAR: new THREE.Color("#64748b"),        // Drill Collar Grey
-};
 
-// --- Trajectory Helpers ---
-const calculateTrajectory = (points: WellPoint[]): THREE.Vector3[] => {
-  if (!points || points.length === 0) return [new THREE.Vector3(0,0,0)];
-  
-  const path: THREE.Vector3[] = [];
-  let x = 0, y = 0, z = 0; 
-  path.push(new THREE.Vector3(0, 0, 0));
+// --- Components ---
 
-  for (let i = 1; i < points.length; i++) {
-    const p1 = points[i - 1];
-    const p2 = points[i];
-    
-    if (!p1 || !p2) continue;
-
-    const dMD = p2.md - p1.md;
-    const avgInc = (p1.inclination + p2.inclination) / 2 * (Math.PI / 180);
-    const avgAzi = (p1.azimuth + p2.azimuth) / 2 * (Math.PI / 180);
-
-    const dZ = dMD * Math.cos(avgInc); 
-    const dH = dMD * Math.sin(avgInc); 
-
-    const dN = dH * Math.cos(avgAzi);
-    const dE = dH * Math.sin(avgAzi);
-
-    x += dE;
-    y -= dZ; 
-    z -= dN;
-    
-    path.push(new THREE.Vector3(x, y, z));
-  }
-  return path;
-};
-
-// --- Detailed Mesh Generation ---
-const generateDrillStringGeometry = (
-  pathPoints: THREE.Vector3[], 
-  components: StringComponent[]
-) => {
-  const curve = new THREE.CatmullRomCurve3(pathPoints);
-  const totalPathLength = curve.getLength();
-  
-  interface FlatComp {
-    type: ComponentType;
-    od: number;
-    id: string;
-    length: number;
-    stabilizer?: any;
-  }
-  
-  const flatString: FlatComp[] = [];
-  components.forEach(comp => {
-    const count = comp.count || 1;
-    for(let i=0; i<count; i++) {
-      flatString.push({
-        type: comp.type,
-        od: comp.od,
-        id: comp.id,
-        length: comp.length,
-        stabilizer: comp.stabilizer
-      });
-    }
-  });
-
-  const positions: number[] = [];
-  const normals: number[] = [];
-  const colors: number[] = [];
-  const indices: number[] = [];
-
-  const RADIAL_SEGMENTS = 12; 
-  let vertexIndex = 0;
-
-  const addRing = (pos: THREE.Vector3, T: THREE.Vector3, N: THREE.Vector3, B: THREE.Vector3, radius: number, color: THREE.Color) => {
-    const r = (radius * 0.0254) * 2.0; 
-
-    for (let j = 0; j <= RADIAL_SEGMENTS; j++) {
-      const theta = (j / RADIAL_SEGMENTS) * Math.PI * 2;
-      const sin = Math.sin(theta);
-      const cos = Math.cos(theta);
-
-      const vx = pos.x + r * (cos * N.x + sin * B.x);
-      const vy = pos.y + r * (cos * N.y + sin * B.y);
-      const vz = pos.z + r * (cos * N.z + sin * B.z);
-
-      const nx = cos * N.x + sin * B.x;
-      const ny = cos * N.y + sin * B.y;
-      const nz = cos * N.z + sin * B.z;
-
-      positions.push(vx, vy, vz);
-      normals.push(nx, ny, nz);
-      colors.push(color.r, color.g, color.b);
-    }
-  };
-
-  let currentMD = 0;
-  let currentUp = new THREE.Vector3(0, 0, 1); 
-
-  for (const comp of flatString) {
-    if (currentMD >= totalPathLength) break;
-
-    type Section = { start: number, end: number, od: number, color: THREE.Color };
-    const sections: Section[] = [];
-    
-    const L = comp.length;
-    const OD = comp.od;
-
-    if (comp.type === ComponentType.DRILL_PIPE || comp.type === ComponentType.HWDP) {
-      const jointLen = 0.4; 
-      const jointOD = OD * 1.4; 
-      sections.push({ start: 0, end: jointLen, od: jointOD, color: COLORS.TOOL_JOINT });
-      sections.push({ start: jointLen, end: L - jointLen, od: OD, color: COLORS.PIPE_BODY });
-      sections.push({ start: L - jointLen, end: L, od: jointOD, color: COLORS.TOOL_JOINT });
-    } else if (comp.type === ComponentType.STABILIZER && comp.stabilizer) {
-       const sParams = comp.stabilizer;
-       const bladeStart = L - sParams.distFromBottom - sParams.bladeLength;
-       const bladeEnd = L - sParams.distFromBottom;
-       if (bladeStart > 0) sections.push({ start: 0, end: bladeStart, od: OD, color: COLORS.COLLAR });
-       sections.push({ start: Math.max(0, bladeStart), end: bladeEnd, od: sParams.bladeOd, color: COLORS.STABILIZER_BLADE });
-       if (bladeEnd < L) sections.push({ start: bladeEnd, end: L, od: OD, color: COLORS.COLLAR });
-    } else if (comp.type === ComponentType.BIT) {
-       sections.push({ start: 0, end: L, od: OD, color: COLORS.BIT });
-    } else {
-       sections.push({ start: 0, end: L, od: OD, color: COLORS.COLLAR });
-    }
-
-    for (const sec of sections) {
-      const startGlobal = currentMD + sec.start;
-      const endGlobal = currentMD + sec.end;
-      
-      if (startGlobal >= totalPathLength) continue;
-
-      const stepSize = 2.0; 
-      const len = sec.end - sec.start;
-      const numSteps = Math.max(1, Math.ceil(len / stepSize));
-
-      for (let i = 0; i <= numSteps; i++) {
-         const tLocal = (i / numSteps) * len;
-         const md = startGlobal + tLocal;
-         if (md > totalPathLength) break;
-         
-         const u = md / totalPathLength;
-         const pos = curve.getPointAt(u);
-         const tangent = curve.getTangentAt(u).normalize();
-         
-         const axis = new THREE.Vector3().crossVectors(currentUp, tangent).normalize();
-         if (axis.lengthSq() < 0.001) axis.set(1,0,0); 
-         const normal = new THREE.Vector3().crossVectors(tangent, axis).normalize();
-         const binormal = axis; 
-         
-         currentUp.copy(normal); 
-
-         addRing(pos, tangent, normal, binormal, sec.od, sec.color);
-         
-         if (vertexIndex >= RADIAL_SEGMENTS + 1) {
-            const prevRingStart = vertexIndex - (RADIAL_SEGMENTS + 1) * 2;
-            const thisRingStart = vertexIndex - (RADIAL_SEGMENTS + 1);
-            for (let j = 0; j < RADIAL_SEGMENTS; j++) {
-              const a = prevRingStart + j;
-              const b = prevRingStart + j + 1;
-              const c = thisRingStart + j;
-              const d = thisRingStart + j + 1;
-              indices.push(a, c, d);
-              indices.push(a, d, b);
-            }
-         }
-         vertexIndex += (RADIAL_SEGMENTS + 1);
-      }
-    }
-    currentMD += L;
-  }
-
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(positions), 3));
-  geometry.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(normals), 3));
-  geometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(colors), 3));
-  geometry.setIndex(indices);
-  geometry.computeVertexNormals();
-  return geometry;
-};
-
-const DetailedDrillString: React.FC<{ config: SimulationConfig }> = React.memo(({ config }) => {
-  const trajectory = useMemo(() => calculateTrajectory(config.wellPath), [config.wellPath]);
-  const stringGeometry = useMemo(() => {
-     return generateDrillStringGeometry(trajectory, config.drillString);
-  }, [trajectory, config.drillString]);
-
-  return (
-     <mesh geometry={stringGeometry}>
-        <meshStandardMaterial vertexColors metalness={0.6} roughness={0.4} />
-     </mesh>
-  );
-});
-
-const WellBore: React.FC<{ config: SimulationConfig, telemetryRef: React.MutableRefObject<TelemetryPoint | undefined> }> = React.memo(({ config, telemetryRef }) => {
-   const pathPoints = useMemo(() => calculateTrajectory(config.wellPath), [config.wellPath]);
-   const fullCurve = useMemo(() => new THREE.CatmullRomCurve3(pathPoints), [pathPoints]);
-   const TUBULAR_SEGMENTS = 2000; 
-   const RADIAL_SEGMENTS = 20;
-   const points = useMemo(() => fullCurve.getSpacedPoints(TUBULAR_SEGMENTS), [fullCurve, TUBULAR_SEGMENTS]); 
-
-   const tubeRef = useRef<any>(null);
-   const lineRef = useRef<any>(null);
-   
-   useEffect(() => {
-      if (lineRef.current) {
-         lineRef.current.computeLineDistances();
-      }
-   }, [points]);
-
-   useFrame(() => {
-      if (!tubeRef.current || !lineRef.current) return;
-      
-      const initialHoleDepth = config.operations.initial_hole_depth ?? 1000;
-      const currentDepth = telemetryRef.current?.depth || 0;
-      const holeDepth = Math.max(initialHoleDepth, currentDepth);
-      const totalLen = fullCurve.getLength();
-      if (totalLen === 0) return;
-
-      const fraction = Math.min(1, Math.max(0, holeDepth / totalLen));
-      const segmentIndex = Math.floor(fraction * TUBULAR_SEGMENTS);
-      const indicesPerSegment = RADIAL_SEGMENTS * 6;
-      const tubeDrawCount = segmentIndex * indicesPerSegment;
-
-      if (tubeRef.current.geometry) {
-         tubeRef.current.geometry.setDrawRange(0, tubeDrawCount);
-      }
-
-      if (lineRef.current.geometry) {
-         const lineStart = segmentIndex;
-         const lineCount = (TUBULAR_SEGMENTS + 1) - lineStart;
-         if (lineCount > 0) {
-            lineRef.current.geometry.setDrawRange(lineStart, lineCount);
-            lineRef.current.visible = true;
-         } else {
-            lineRef.current.visible = false;
-         }
-      }
-   });
-
-   return (
-    <group>
-      <mesh ref={tubeRef}>
-        <tubeGeometry args={[fullCurve, TUBULAR_SEGMENTS, 20, RADIAL_SEGMENTS, false]} />
-        <meshPhysicalMaterial 
-          color="#94a3b8" 
-          side={THREE.BackSide} 
-          transparent 
-          opacity={0.3} 
-          roughness={0.2}
-          metalness={0.5}
-          transmission={0.2}
-        />
-      </mesh>
-      
-      <line ref={lineRef}>
-        <bufferGeometry>
-           <bufferAttribute attach="attributes-position" count={points.length} array={new Float32Array(points.flatMap(p => [p.x, p.y, p.z]))} itemSize={3} />
-        </bufferGeometry>
-        <lineDashedMaterial color="#06b6d4" linewidth={2} opacity={1} transparent dashSize={10} gapSize={5} />
-      </line>
-    </group>
-   );
-});
-
-const BitMarker: React.FC<{ 
-  config: SimulationConfig, 
-  telemetryRef: React.MutableRefObject<TelemetryPoint | undefined>,
+const Pipe3D: React.FC<{ 
+    config: SimulationConfig, 
+    telemetryRef: React.MutableRefObject<TelemetryPoint | undefined>
 }> = ({ config, telemetryRef }) => {
-  const meshRef = useRef<THREE.Mesh>(null);
-  const path = useMemo(() => calculateTrajectory(config.wellPath), [config.wellPath]);
-  const curve = useMemo(() => new THREE.CatmullRomCurve3(path), [path]);
-  const totalLen = curve.getLength();
+    const meshRef = useRef<THREE.Mesh>(null);
+    
+    const { geometry, curve } = useMemo(() => {
+        // Calculate trajectory points from well path
+        const points: THREE.Vector3[] = [new THREE.Vector3(0, 0, 0)];
+        let x = 0, y = 0, z = 0;
+        
+        for (let i = 1; i < config.wellPath.length; i++) {
+            const p1 = config.wellPath[i - 1];
+            const p2 = config.wellPath[i];
+            const dMD = p2.md - p1.md;
+            const avgInc = (p1.inclination + p2.inclination) / 2 * (Math.PI / 180);
+            const avgAzi = (p1.azimuth + p2.azimuth) / 2 * (Math.PI / 180);
 
-  useFrame(() => {
-    if (!meshRef.current) return;
-    const depth = telemetryRef.current ? telemetryRef.current.depth : (config.operations.initial_bit_depth || 0);
-    const rpm = telemetryRef.current ? telemetryRef.current.rpmBit : 0;
-    const t = totalLen > 0 ? Math.min(1, Math.max(0, depth / totalLen)) : 0;
-    const point = curve.getPointAt(t);
-    meshRef.current.position.copy(point);
-    const tangent = curve.getTangentAt(t);
-    meshRef.current.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), tangent);
-    meshRef.current.rotateY(rpm * 0.01);
-  });
+            x += dMD * Math.sin(avgInc) * Math.sin(avgAzi);
+            y -= dMD * Math.cos(avgInc);
+            z -= dMD * Math.sin(avgInc) * Math.cos(avgAzi);
+            
+            points.push(new THREE.Vector3(x, y, z));
+        }
 
-  return (
-    <mesh ref={meshRef}>
-       <sphereGeometry args={[4, 16, 16]} />
-       <meshStandardMaterial color="#ef4444" emissive="#b91c1c" emissiveIntensity={0.5} transparent opacity={0.8} />
-    </mesh>
-  );
+        const curve = new THREE.CatmullRomCurve3(points);
+        const totalLength = curve.getLength();
+        
+        // Create custom geometry with varying radius for tool joints and stabilizers
+        const tubularSegments = 400;
+        const radialSegments = 20;
+        const positions: number[] = [];
+        const normals: number[] = [];
+        const indices: number[] = [];
+        const colors: number[] = [];
+        
+        // Flatten drill string components
+        interface FlatComponent {
+            type: ComponentType;
+            od: number;
+            length: number;
+            stabilizer?: { bladeOd: number; bladeLength: number; distFromBottom: number };
+        }
+        
+        const flatString: FlatComponent[] = [];
+        config.drillString.forEach(comp => {
+            const count = comp.count || 1;
+            for (let i = 0; i < count; i++) {
+                flatString.push({
+                    type: comp.type,
+                    od: comp.od,
+                    length: comp.length,
+                    stabilizer: comp.stabilizer
+                });
+            }
+        });
+        
+        let currentMD = 0;
+        const componentPositions: { start: number; end: number; comp: FlatComponent }[] = [];
+        flatString.forEach(comp => {
+            componentPositions.push({
+                start: currentMD,
+                end: currentMD + comp.length,
+                comp
+            });
+            currentMD += comp.length;
+        });
+        
+        // Generate mesh
+        for (let i = 0; i <= tubularSegments; i++) {
+            const t = i / tubularSegments;
+            const md = t * totalLength;
+            const pos = curve.getPointAt(t);
+            const tangent = curve.getTangentAt(t);
+            
+            // Find which component we're in
+            let radius = 2.5; // Default radius in meters (converted from inches)
+            let color = new THREE.Color(0.6, 0.6, 0.6); // Default grey
+            
+            for (const { start, end, comp } of componentPositions) {
+                if (md >= start && md <= end) {
+                    const localMD = md - start;
+                    const baseRadius = (comp.od * 0.0254) / 2; // Convert inches to meters
+                    
+                    // Tool joints for drill pipe and HWDP
+                    if (comp.type === ComponentType.DRILL_PIPE || comp.type === ComponentType.HWDP) {
+                        const jointLength = 0.4;
+                        const jointRadius = baseRadius * 1.5;
+                        
+                        if (localMD < jointLength) {
+                            radius = jointRadius;
+                            color = new THREE.Color(0.3, 0.3, 0.3); // Dark grey for joints
+                        } else if (localMD > comp.length - jointLength) {
+                            radius = jointRadius;
+                            color = new THREE.Color(0.3, 0.3, 0.3);
+                        } else {
+                            radius = baseRadius;
+                            color = new THREE.Color(0.7, 0.7, 0.7); // Light grey for body
+                        }
+                    }
+                    // Stabilizer blades
+                    else if (comp.type === ComponentType.STABILIZER && comp.stabilizer) {
+                        const { bladeOd, bladeLength, distFromBottom } = comp.stabilizer;
+                        const bladeStart = comp.length - distFromBottom - bladeLength;
+                        const bladeEnd = comp.length - distFromBottom;
+                        
+                        if (localMD >= bladeStart && localMD <= bladeEnd) {
+                            radius = (bladeOd * 0.0254) / 2;
+                            color = new THREE.Color(0.1, 0.1, 0.1); // Very dark for blades
+                        } else {
+                            radius = baseRadius;
+                            color = new THREE.Color(0.5, 0.5, 0.5);
+                        }
+                    }
+                    // Drill collars
+                    else if (comp.type === ComponentType.DRILL_COLLAR) {
+                        radius = baseRadius;
+                        color = new THREE.Color(0.4, 0.4, 0.4); // Medium grey
+                    }
+                    // Bit
+                    else if (comp.type === ComponentType.BIT) {
+                        radius = baseRadius;
+                        color = new THREE.Color(0.8, 0.5, 0.0); // Orange/bronze
+                    }
+                    else {
+                        radius = baseRadius;
+                        color = new THREE.Color(0.6, 0.6, 0.6);
+                    }
+                    break;
+                }
+            }
+            
+            // Create normal and binormal
+            const normal = new THREE.Vector3();
+            const binormal = new THREE.Vector3();
+            
+            if (Math.abs(tangent.y) < 0.999) {
+                normal.set(0, 1, 0).cross(tangent).normalize();
+            } else {
+                normal.set(1, 0, 0).cross(tangent).normalize();
+            }
+            binormal.crossVectors(tangent, normal);
+            
+            // Create ring of vertices
+            for (let j = 0; j <= radialSegments; j++) {
+                const theta = (j / radialSegments) * Math.PI * 2;
+                const sin = Math.sin(theta);
+                const cos = Math.cos(theta);
+                
+                const vx = pos.x + radius * (cos * normal.x + sin * binormal.x);
+                const vy = pos.y + radius * (cos * normal.y + sin * binormal.y);
+                const vz = pos.z + radius * (cos * normal.z + sin * binormal.z);
+                
+                const nx = cos * normal.x + sin * binormal.x;
+                const ny = cos * normal.y + sin * binormal.y;
+                const nz = cos * normal.z + sin * binormal.z;
+                
+                positions.push(vx, vy, vz);
+                normals.push(nx, ny, nz);
+                colors.push(color.r, color.g, color.b);
+            }
+        }
+        
+        // Generate indices
+        for (let i = 0; i < tubularSegments; i++) {
+            for (let j = 0; j < radialSegments; j++) {
+                const a = i * (radialSegments + 1) + j;
+                const b = i * (radialSegments + 1) + j + 1;
+                const c = (i + 1) * (radialSegments + 1) + j;
+                const d = (i + 1) * (radialSegments + 1) + j + 1;
+                
+                indices.push(a, c, d);
+                indices.push(a, d, b);
+            }
+        }
+        
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+        geo.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+        geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+        geo.setIndex(indices);
+        
+        return { geometry: geo, curve };
+    }, [config.wellPath, config.drillString]);
+
+    // Rotation animation based on RPM
+    useFrame(() => {
+        if (!meshRef.current || !telemetryRef.current) return;
+        
+        const rpm = telemetryRef.current.rpmBit || 0;
+        const radiansPerSecond = (rpm * 2 * Math.PI) / 60;
+        
+        // Rotate around the tangent at each point (simplified: rotate around local Y-axis)
+        meshRef.current.rotation.y += radiansPerSecond * 0.016; // Approximate frame time
+    });
+
+    return (
+        <mesh ref={meshRef} geometry={geometry}>
+            <meshStandardMaterial 
+                vertexColors
+                metalness={0.7} 
+                roughness={0.3}
+            />
+        </mesh>
+    );
+};
+
+const Hole3D: React.FC<{ 
+    config: SimulationConfig,
+    telemetryRef: React.MutableRefObject<TelemetryPoint | undefined>
+}> = ({ config, telemetryRef }) => {
+    const { scene } = useThree();
+    const rendererRef = useRef<HoleRenderer | null>(null);
+    const meshRef = useRef<THREE.Mesh | null>(null);
+
+    useEffect(() => {
+        const renderer = new HoleRenderer(config.wellPath);
+        rendererRef.current = renderer;
+
+        const mesh = new THREE.Mesh(renderer.geometry, renderer.material);
+        mesh.frustumCulled = false;
+        scene.add(mesh);
+        meshRef.current = mesh;
+
+        return () => {
+            if (meshRef.current) {
+                scene.remove(meshRef.current);
+                meshRef.current.geometry.dispose();
+            }
+        };
+    }, [config.wellPath, scene]);
+
+    useFrame(() => {
+        if (!rendererRef.current) return;
+        const depth = telemetryRef.current?.depth || 0;
+        rendererRef.current.update(depth);
+    });
+
+    return null;
 };
 
 const AxisLabel: React.FC<{ 
@@ -356,12 +301,29 @@ const AxisLabel: React.FC<{
 };
 
 const AnnotatedAxes: React.FC<{ config: SimulationConfig }> = React.memo(({ config }) => {
-  const path = useMemo(() => calculateTrajectory(config.wellPath), [config.wellPath]);
+  // ... (Existing implementation kept for context, simplified for brevity in this replacement)
+  // Re-implementing the axes logic to ensure it stays
+  const pathPoints = useMemo(() => {
+      // Simple trajectory calc for axes bounds
+      const points: THREE.Vector3[] = [new THREE.Vector3(0,0,0)];
+      let x=0, y=0, z=0;
+      for(let i=1; i<config.wellPath.length; i++) {
+          const p1 = config.wellPath[i-1];
+          const p2 = config.wellPath[i];
+          const dMD = p2.md - p1.md;
+          const inc = (p1.inclination + p2.inclination)/2 * Math.PI/180;
+          const azi = (p1.azimuth + p2.azimuth)/2 * Math.PI/180;
+          x += dMD * Math.sin(inc) * Math.sin(azi);
+          y -= dMD * Math.cos(inc);
+          z -= dMD * Math.sin(inc) * Math.cos(azi);
+          points.push(new THREE.Vector3(x,y,z));
+      }
+      return points;
+  }, [config.wellPath]);
   
   let minY = 0;
   let maxExtent = 0; 
-
-  path.forEach(p => {
+  pathPoints.forEach(p => {
       if(p.y < minY) minY = p.y;
       const r = Math.max(Math.abs(p.x), Math.abs(p.z));
       if (r > maxExtent) maxExtent = r;
@@ -459,13 +421,18 @@ const AnnotatedAxes: React.FC<{ config: SimulationConfig }> = React.memo(({ conf
 interface SceneProps {
   config: SimulationConfig;
   telemetryRef: React.MutableRefObject<TelemetryPoint | undefined>;
+  solverDataRef?: React.MutableRefObject<SolverFrameData | undefined>; // Made optional for backward compat
   staticDepth: number;
   currentHoleDepth: number;
 }
 
-const Visualization3DComponent: React.FC<SceneProps> = ({ config, telemetryRef }) => {
+const Visualization3DComponent: React.FC<SceneProps> = ({ config, telemetryRef, solverDataRef }) => {
   const maxDepth = config.wellPath[config.wellPath.length-1].md;
   
+  // Fallback ref if not provided
+  const internalSolverRef = useRef<SolverFrameData | undefined>(undefined);
+  const effectiveSolverRef = solverDataRef || internalSolverRef;
+
   return (
     <div className="w-full h-full bg-slate-50 overflow-hidden border-l border-slate-200 relative shadow-inner">
       <Canvas shadows>
@@ -475,9 +442,8 @@ const Visualization3DComponent: React.FC<SceneProps> = ({ config, telemetryRef }
         <directionalLight position={[-500, 1000, 500]} intensity={1.0} castShadow />
 
         <group>
-            <WellBore config={config} telemetryRef={telemetryRef} />
-            <DetailedDrillString config={config} />
-            <BitMarker config={config} telemetryRef={telemetryRef} />
+            <Hole3D config={config} telemetryRef={telemetryRef} />
+            <Pipe3D config={config} telemetryRef={telemetryRef} />
             <AnnotatedAxes config={config} />
         </group>
         
@@ -491,6 +457,7 @@ const Visualization3DComponent: React.FC<SceneProps> = ({ config, telemetryRef }
         <div>Left Click: Rotate</div>
         <div>Right Click: Pan</div>
         <div>Scroll: Zoom</div>
+        <div className="mt-2 text-blue-600">Using WebGL 2.0 Custom Shaders</div>
       </div>
     </div>
   );

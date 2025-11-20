@@ -17,14 +17,14 @@
     "@types/ws": "^8.18.1",
     "cors": "^2.8.5",
     "express": "^5.1.0",
+    "js-yaml": "^4.1.0",
     "lucide-react": "^0.554.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "recharts": "^3.4.1",
-    "@google/genai": "^1.30.0",
-    "js-yaml": "^4.1.0"
+    "recharts": "^3.4.1"
   },
   "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
     "typescript": "~5.8.2",

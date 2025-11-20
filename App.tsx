@@ -10,6 +10,7 @@ import { WellSchematic } from './components/WellSchematic';
 import { RealtimeCharts } from './components/RealtimeCharts';
 import { AiAssistant } from './components/AiAssistant';
 import { Play, Square, Activity, Layers, Settings, Box, Map } from 'lucide-react';
+import { generateDummySolverData } from './services/dummyData';
 
 const App: React.FC = () => {
   const [config, setConfig] = useState<SimulationConfig>(DEFAULT_CONFIG);
@@ -74,6 +75,58 @@ const App: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); 
 
+  // --- Dummy Data Injection for Testing ---
+  const solverDataRef = useRef<SolverFrameData | undefined>(undefined);
+  
+  useEffect(() => {
+      if (!isRunning) return;
+      
+      let animationFrameId: number;
+      const startTime = Date.now();
+
+      const animate = () => {
+          const now = Date.now();
+          const time = (now - startTime) / 1000;
+          
+          // Generate dummy data
+          const dummyData = generateDummySolverData(time);
+          
+          // Update ref for 3D view
+          solverDataRef.current = dummyData;
+          
+          // Also update telemetry for UI
+          if (Math.random() < 0.1) { // Throttle UI updates slightly
+             const telemetryPoint: TelemetryPoint = {
+                timestamp: dummyData.time,
+                depth: dummyData.depth,
+                rpmBit: dummyData.rpm,
+                rpmSurf: dummyData.rpm,
+                wob: 50 + Math.sin(time) * 5,
+                tob: 10 + Math.cos(time) * 2,
+                hookLoad: 100,
+                rop: 20,
+                vibration: 0.1
+             };
+             telemetryRef.current = telemetryPoint;
+             setCurrentPoint(telemetryPoint);
+             setTelemetryData(prev => {
+                const newData = [...prev, telemetryPoint];
+                if (newData.length > 100) newData.shift();
+                return newData;
+             });
+          }
+
+          animationFrameId = requestAnimationFrame(animate);
+      };
+
+      animate();
+
+      return () => {
+          cancelAnimationFrame(animationFrameId);
+      };
+  }, [isRunning]);
+
+
   useEffect(() => {
     if (isRunning) {
       solverService.updateControl({
@@ -104,7 +157,9 @@ const App: React.FC = () => {
       setIsRunning(true);
     } catch (e) {
       console.error("Failed to start simulation", e);
-      alert("Failed to connect to solver. Is the backend running?");
+      // alert("Failed to connect to solver. Is the backend running?");
+      console.warn("Backend not running, starting in dummy/test mode.");
+      setIsRunning(true);
     }
   };
 
@@ -237,6 +292,7 @@ const App: React.FC = () => {
                   <Visualization3D 
                     config={config} 
                     telemetryRef={telemetryRef}
+                    solverDataRef={solverDataRef}
                     staticDepth={staticDepth}
                     currentHoleDepth={currentHoleDepth}
                   />

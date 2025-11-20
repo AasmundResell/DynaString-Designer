@@ -151,6 +151,10 @@ export interface SolverFrameData {
     x: number; // Global X
     y: number; // Global Y
     z: number; // Global Z
+    qx?: number; // Quaternion X
+    qy?: number; // Quaternion Y
+    qz?: number; // Quaternion Z
+    qw?: number; // Quaternion W
     tension?: number;
   }[];
 }
